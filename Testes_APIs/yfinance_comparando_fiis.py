@@ -47,3 +47,11 @@ df["dy_12m"] = df["dy_12m"] * 100
 #df = df.sort_values("dy_12m", ascending=False).reset_index(drop=True)
 
 print(df.to_string())
+
+'''
+   ticker   price       pvp     dy_12m  dividend_12m  liquidez_media  liquidez_10d  market_cap  52w_high  52w_low
+0  HGLG11  158.33  1.000575   8.337018         13.20           96084         81507  5349586944    163.30   149.48
+1  KNRI11  167.67  1.046727   7.294090         12.23           40604         49212  4735740928    168.55   129.00
+2  XPLG11  102.78       NaN   9.573847          9.84           53117         62794  3043648000    106.76    91.39
+3  MXRF11    9.76  0.983276  12.192623          1.19         1810438       1804053  4268295168      9.99     8.99
+'''
