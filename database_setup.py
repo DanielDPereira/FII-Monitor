@@ -1,53 +1,181 @@
+import os
 import sqlite3
+
+
+DB_PATH = os.path.join(os.path.dirname(__file__), "fii_monitor.db")
+
 
 def setup_database():
     # Conecta ao arquivo do banco (será criado se não existir)
-    conn = sqlite3.connect('fii_monitor.db')
+    conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Habilita o suporte a Chaves Estrangeiras (Foreign Keys) no SQLite
+    # Habilita o suporte a chaves estrangeiras no SQLite
     cursor.execute("PRAGMA foreign_keys = ON;")
 
     # 1. TABELA DE ATIVOS
-    # CHECK(length(ticker) <= 6) garante a integridade pedida
-    cursor.execute('''
+    # Aceita ticker no formato B3 + sufixo (ex.: HGLG11.SA)
+    cursor.execute(
+        '''
         CREATE TABLE IF NOT EXISTS ativos (
-            ticker TEXT PRIMARY KEY CHECK(length(ticker) <= 6),
+            ticker TEXT PRIMARY KEY CHECK(length(ticker) <= 15),
             nome TEXT NOT NULL,
             setor TEXT,
             preco_teto REAL DEFAULT 0.0
         )
-    ''')
+        '''
+    )
 
-    # 2. TABELA DE TRANSAÇÕES
-    # Registra o histórico de compras e vendas
-    cursor.execute('''
+    # 2. TABELA DE TRANSAÇÕES (carteira do usuário)
+    cursor.execute(
+        '''
         CREATE TABLE IF NOT EXISTS transacoes (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
-            data TEXT NOT NULL,          -- Formato: YYYY-MM-DD
+            data TEXT NOT NULL,
             tipo TEXT CHECK(tipo IN ('COMPRA', 'VENDA')),
             quantidade INTEGER NOT NULL CHECK(quantidade > 0),
             preco_unitario REAL NOT NULL,
             FOREIGN KEY (ticker) REFERENCES ativos (ticker)
+                ON UPDATE CASCADE
+                ON DELETE RESTRICT
         )
-    ''')
+        '''
+    )
 
-    # 3. TABELA DE PROVENTOS (Dividendos)
-    # Para acompanhar quanto o fundo está rendendo no seu bolso
-    cursor.execute('''
+    # 3. TABELA DE PROVENTOS (carteira do usuário)
+    cursor.execute(
+        '''
         CREATE TABLE IF NOT EXISTS proventos (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             ticker TEXT NOT NULL,
             data_pagamento TEXT NOT NULL,
             valor_total REAL NOT NULL,
             FOREIGN KEY (ticker) REFERENCES ativos (ticker)
+                ON UPDATE CASCADE
+                ON DELETE RESTRICT
         )
-    ''')
+        '''
+    )
+
+    # 4. HISTÓRICO DIÁRIO (modelo price_history.csv)
+    cursor.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS fii_price_history (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume INTEGER,
+            dividends REAL DEFAULT 0,
+            PRIMARY KEY (ticker, date),
+            FOREIGN KEY (ticker) REFERENCES ativos (ticker)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        )
+        '''
+    )
+
+    # 5. HISTÓRICO MENSAL DE PREÇOS (modelo monthly_prices.csv)
+    cursor.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS fii_monthly_prices (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            open REAL,
+            high REAL,
+            low REAL,
+            close REAL,
+            volume INTEGER,
+            PRIMARY KEY (ticker, date),
+            FOREIGN KEY (ticker) REFERENCES ativos (ticker)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        )
+        '''
+    )
+
+    # 6. DIVIDENDOS POR EVENTO (modelo dividends.csv)
+    cursor.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS fii_dividends (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            dividend REAL NOT NULL,
+            PRIMARY KEY (ticker, date),
+            FOREIGN KEY (ticker) REFERENCES ativos (ticker)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        )
+        '''
+    )
+
+    # 7. DIVIDENDOS MENSAIS AGREGADOS (modelo dividends_monthly.csv)
+    cursor.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS fii_dividends_monthly (
+            ticker TEXT NOT NULL,
+            date TEXT NOT NULL,
+            dividend REAL NOT NULL,
+            PRIMARY KEY (ticker, date),
+            FOREIGN KEY (ticker) REFERENCES ativos (ticker)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        )
+        '''
+    )
+
+    # 8. SNAPSHOT DE MÉTRICAS (modelo metrics.csv)
+    # Mantém histórico de coleta com timestamp para comparar evoluções.
+    cursor.execute(
+        '''
+        CREATE TABLE IF NOT EXISTS fii_metrics (
+            ticker TEXT NOT NULL,
+            collected_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            price REAL,
+            book_value REAL,
+            p_vp REAL,
+            dividend_yield_api REAL,
+            dividend_12m REAL,
+            dy_12m REAL,
+            market_cap INTEGER,
+            avg_volume INTEGER,
+            PRIMARY KEY (ticker, collected_at),
+            FOREIGN KEY (ticker) REFERENCES ativos (ticker)
+                ON UPDATE CASCADE
+                ON DELETE CASCADE
+        )
+        '''
+    )
+
+    # Índices auxiliares para consultas frequentes por ticker e data.
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fii_price_history_ticker_date "
+        "ON fii_price_history (ticker, date DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fii_monthly_prices_ticker_date "
+        "ON fii_monthly_prices (ticker, date DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fii_dividends_ticker_date "
+        "ON fii_dividends (ticker, date DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fii_dividends_monthly_ticker_date "
+        "ON fii_dividends_monthly (ticker, date DESC)"
+    )
+    cursor.execute(
+        "CREATE INDEX IF NOT EXISTS idx_fii_metrics_ticker_collected_at "
+        "ON fii_metrics (ticker, collected_at DESC)"
+    )
 
     conn.commit()
     conn.close()
-    print("✅ Banco de dados 'fii_monitor.db' configurado com sucesso!")
+    print(f"Banco de dados configurado com sucesso em: {DB_PATH}")
+
 
 if __name__ == "__main__":
     setup_database()
