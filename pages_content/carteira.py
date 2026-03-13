@@ -2,7 +2,7 @@
 Página: Carteira e Transações
 """
 
-from datetime import date
+from datetime import date, datetime
 import streamlit as st
 import sys
 import os
@@ -26,6 +26,16 @@ def _fmt_pct(valor):
     if valor is None:
         return "-"
     return f"{valor:.2f}%"
+
+
+def _fmt_datetime_br(ts: str | None) -> str:
+    if not ts:
+        return "Sem atualização de mercado ainda."
+    try:
+        dt = datetime.strptime(ts, "%Y-%m-%d %H:%M:%S")
+        return dt.strftime("%d/%m/%Y %H:%M:%S")
+    except ValueError:
+        return ts
 
 
 def render():
@@ -68,6 +78,10 @@ def _tab_resumo():
                         )
                     except Exception as exc:
                         st.error(f"Falha ao atualizar dados de mercado: {str(exc)}")
+
+    with col_btn_2:
+        ultima_atualizacao = db.obter_ultima_atualizacao_mercado()
+        st.caption(f"Última atualização de mercado: {_fmt_datetime_br(ultima_atualizacao)}")
 
     db.sincronizar_proventos_automaticos()
     resumo = db.resumo_carteira()

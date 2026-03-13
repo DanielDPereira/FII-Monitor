@@ -390,6 +390,17 @@ def atualizar_dados_mercado_yfinance(tickers: list[str]) -> dict:
     return counters
 
 
+def obter_ultima_atualizacao_mercado() -> str | None:
+    """Retorna timestamp da ultima coleta em fii_metrics."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT MAX(collected_at) AS ultima_atualizacao FROM fii_metrics"
+        ).fetchone()
+    if not row:
+        return None
+    return row["ultima_atualizacao"]
+
+
 def listar_ativos_com_metricas_recentes():
     """Lista ativos junto com último snapshot de métricas, quando existir."""
     with get_connection() as conn:
