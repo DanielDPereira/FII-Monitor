@@ -301,3 +301,198 @@ def obter_historico_preco(ticker: str, limite: int = 30):
             (ticker_db, int(limite)),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── TRANSAÇÕES E CARTEIRA ──────────────────────────────────────────────────
+
+def inserir_transacao(
+    ticker: str,
+    data: str,
+    tipo: str,
+    quantidade: int,
+    preco_unitario: float,
+) -> bool:
+    """Insere transacao para um ativo existente. Retorna False se ativo nao existir."""
+    ticker_db = _normalize_user_ticker(ticker)
+    tipo_db = (tipo or "").strip().upper()
+
+    if tipo_db not in ("COMPRA", "VENDA"):
+        raise ValueError("tipo deve ser COMPRA ou VENDA")
+
+    if quantidade <= 0:
+        raise ValueError("quantidade deve ser maior que zero")
+
+    if preco_unitario <= 0:
+        raise ValueError("preco_unitario deve ser maior que zero")
+
+    with get_connection() as conn:
+        ativo = conn.execute(
+            "SELECT 1 FROM ativos WHERE ticker = ?",
+            (ticker_db,),
+        ).fetchone()
+        if not ativo:
+            return False
+
+        conn.execute(
+            """
+            INSERT INTO transacoes (ticker, data, tipo, quantidade, preco_unitario)
+            VALUES (?, ?, ?, ?, ?)
+            """,
+            (ticker_db, data, tipo_db, int(quantidade), float(preco_unitario)),
+        )
+        conn.commit()
+    return True
+
+
+def listar_transacoes(ticker: str = None, limite: int = 500):
+    """Lista transacoes mais recentes, opcionalmente filtrando por ticker."""
+    query = (
+        """
+        SELECT id, ticker, data, tipo, quantidade, preco_unitario,
+               ROUND(quantidade * preco_unitario, 2) AS valor_total
+        FROM transacoes
+        """
+    )
+    params = []
+
+    if ticker:
+        query += " WHERE ticker = ?"
+        params.append(_normalize_user_ticker(ticker))
+
+    query += " ORDER BY data DESC, id DESC LIMIT ?"
+    params.append(int(limite))
+
+    with get_connection() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def deletar_transacao(transacao_id: int):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM transacoes WHERE id = ?", (int(transacao_id),))
+        conn.commit()
+
+
+def calcular_posicoes_carteira():
+    """
+    Consolida carteira por ticker a partir das transacoes e do ultimo preco coletado.
+    Retorna apenas ativos com quantidade em carteira maior que zero.
+    """
+    with get_connection() as conn:
+        transacoes = conn.execute(
+            """
+            SELECT ticker, data, tipo, quantidade, preco_unitario
+            FROM transacoes
+            ORDER BY ticker, data, id
+            """
+        ).fetchall()
+
+        ativos = conn.execute(
+            "SELECT ticker, nome, setor FROM ativos"
+        ).fetchall()
+
+        precos_rows = conn.execute(
+            """
+            SELECT m.ticker, m.price
+            FROM fii_metrics m
+            INNER JOIN (
+                SELECT ticker, MAX(collected_at) AS max_collected_at
+                FROM fii_metrics
+                GROUP BY ticker
+            ) latest
+                ON latest.ticker = m.ticker
+               AND latest.max_collected_at = m.collected_at
+            """
+        ).fetchall()
+
+    ativos_map = {row["ticker"]: dict(row) for row in ativos}
+    precos_map = {row["ticker"]: row["price"] for row in precos_rows}
+
+    consolidado = {}
+    for tx in transacoes:
+        ticker = tx["ticker"]
+        qtd = int(tx["quantidade"])
+        preco = float(tx["preco_unitario"])
+        tipo = tx["tipo"]
+
+        if ticker not in consolidado:
+            consolidado[ticker] = {
+                "ticker": ticker,
+                "nome": ativos_map.get(ticker, {}).get("nome", ticker),
+                "setor": ativos_map.get(ticker, {}).get("setor", "Outro"),
+                "quantidade": 0,
+                "custo_posicao": 0.0,
+                "lucro_realizado": 0.0,
+            }
+
+        pos = consolidado[ticker]
+
+        if tipo == "COMPRA":
+            pos["quantidade"] += qtd
+            pos["custo_posicao"] += qtd * preco
+        elif tipo == "VENDA":
+            if pos["quantidade"] <= 0:
+                continue
+
+            qtd_venda = min(qtd, pos["quantidade"])
+            preco_medio_atual = pos["custo_posicao"] / pos["quantidade"]
+            pos["lucro_realizado"] += (preco - preco_medio_atual) * qtd_venda
+            pos["custo_posicao"] -= preco_medio_atual * qtd_venda
+            pos["quantidade"] -= qtd_venda
+
+            if pos["quantidade"] == 0:
+                pos["custo_posicao"] = 0.0
+
+    posicoes = []
+    for ticker, pos in consolidado.items():
+        if pos["quantidade"] <= 0:
+            continue
+
+        preco_medio = pos["custo_posicao"] / pos["quantidade"]
+        preco_atual = precos_map.get(ticker)
+        valor_atual = (
+            float(preco_atual) * pos["quantidade"]
+            if preco_atual is not None
+            else None
+        )
+        pl_nao_realizado = (
+            valor_atual - pos["custo_posicao"]
+            if valor_atual is not None
+            else None
+        )
+
+        posicoes.append(
+            {
+                "ticker": ticker,
+                "nome": pos["nome"],
+                "setor": pos["setor"],
+                "quantidade": pos["quantidade"],
+                "preco_medio": round(preco_medio, 4),
+                "custo_posicao": round(pos["custo_posicao"], 2),
+                "preco_atual": round(float(preco_atual), 4) if preco_atual is not None else None,
+                "valor_atual": round(valor_atual, 2) if valor_atual is not None else None,
+                "pl_nao_realizado": round(pl_nao_realizado, 2) if pl_nao_realizado is not None else None,
+                "lucro_realizado": round(pos["lucro_realizado"], 2),
+            }
+        )
+
+    posicoes.sort(key=lambda x: x["custo_posicao"], reverse=True)
+    return posicoes
+
+
+def resumo_carteira():
+    posicoes = calcular_posicoes_carteira()
+    custo_total = round(sum(p["custo_posicao"] for p in posicoes), 2)
+
+    valor_atual_total = round(
+        sum(p["valor_atual"] for p in posicoes if p["valor_atual"] is not None),
+        2,
+    )
+    pl_total = round(valor_atual_total - custo_total, 2)
+
+    return {
+        "ativos_em_carteira": len(posicoes),
+        "custo_total": custo_total,
+        "valor_atual_total": valor_atual_total,
+        "pl_total": pl_total,
+    }
