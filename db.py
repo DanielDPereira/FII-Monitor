@@ -7,14 +7,9 @@ from datetime import datetime
 DB_PATH = os.path.join(os.path.dirname(__file__), "fii_monitor.db")
 
 
-def _to_storage_ticker(ticker: str) -> str:
-    """Converte ticker digitado (ex.: MXRF11) para formato interno (MXRF11.SA)."""
-    ticker_norm = (ticker or "").strip().upper()
-    if ticker_norm.endswith(".SA"):
-        base = ticker_norm[:-3]
-    else:
-        base = ticker_norm
-    return f"{base}.SA"
+def _normalize_user_ticker(ticker: str) -> str:
+    """Normaliza ticker informado pelo usuario (trim + upper)."""
+    return (ticker or "").strip().upper()
 
 
 def get_connection():
@@ -38,7 +33,7 @@ def buscar_ativo(ticker: str):
     with get_connection() as conn:
         row = conn.execute(
             "SELECT ticker, nome, setor FROM ativos WHERE ticker = ?",
-            (_to_storage_ticker(ticker),),
+            (_normalize_user_ticker(ticker),),
         ).fetchone()
     return dict(row) if row else None
 
@@ -46,7 +41,7 @@ def buscar_ativo(ticker: str):
 def inserir_ativo(ticker: str, nome: str, setor: str) -> bool:
     """Retorna True se inserido, False se ticker já existe."""
     try:
-        ticker_db = _to_storage_ticker(ticker)
+        ticker_db = _normalize_user_ticker(ticker)
         with get_connection() as conn:
             conn.execute(
                 "INSERT INTO ativos (ticker, nome, setor) VALUES (?, ?, ?)",
@@ -59,7 +54,7 @@ def inserir_ativo(ticker: str, nome: str, setor: str) -> bool:
 
 
 def atualizar_ativo(ticker: str, nome: str, setor: str):
-    ticker_db = _to_storage_ticker(ticker)
+    ticker_db = _normalize_user_ticker(ticker)
     with get_connection() as conn:
         conn.execute(
             "UPDATE ativos SET nome = ?, setor = ? WHERE ticker = ?",
@@ -69,7 +64,7 @@ def atualizar_ativo(ticker: str, nome: str, setor: str):
 
 
 def deletar_ativo(ticker: str):
-    ticker_db = _to_storage_ticker(ticker)
+    ticker_db = _normalize_user_ticker(ticker)
     with get_connection() as conn:
         conn.execute("DELETE FROM ativos WHERE ticker = ?", (ticker_db,))
         conn.commit()
@@ -78,7 +73,7 @@ def deletar_ativo(ticker: str):
 # ── DADOS DE MERCADO (YFINANCE) ────────────────────────────────────────────
 
 def _upsert_ativo_minimo(conn, ticker: str):
-    ticker_norm = _to_storage_ticker(ticker)
+    ticker_norm = _normalize_user_ticker(ticker)
     conn.execute(
         """
         INSERT INTO ativos (ticker, nome, setor)
@@ -135,7 +130,7 @@ def importar_dados_mercado_csv(data_dir: str) -> dict:
         with open(files["price_history"], "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ticker = row["ticker"].upper().strip()
+                ticker = _normalize_user_ticker(row["ticker"])
                 _upsert_ativo_minimo(conn, ticker)
                 conn.execute(
                     """
@@ -166,7 +161,7 @@ def importar_dados_mercado_csv(data_dir: str) -> dict:
         with open(files["monthly_prices"], "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ticker = row["ticker"].upper().strip()
+                ticker = _normalize_user_ticker(row["ticker"])
                 _upsert_ativo_minimo(conn, ticker)
                 conn.execute(
                     """
@@ -195,7 +190,7 @@ def importar_dados_mercado_csv(data_dir: str) -> dict:
         with open(files["dividends"], "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ticker = row["ticker"].upper().strip()
+                ticker = _normalize_user_ticker(row["ticker"])
                 _upsert_ativo_minimo(conn, ticker)
                 conn.execute(
                     """
@@ -215,7 +210,7 @@ def importar_dados_mercado_csv(data_dir: str) -> dict:
         with open(files["dividends_monthly"], "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ticker = row["ticker"].upper().strip()
+                ticker = _normalize_user_ticker(row["ticker"])
                 _upsert_ativo_minimo(conn, ticker)
                 conn.execute(
                     """
@@ -235,7 +230,7 @@ def importar_dados_mercado_csv(data_dir: str) -> dict:
         with open(files["metrics"], "r", encoding="utf-8") as f:
             reader = csv.DictReader(f)
             for row in reader:
-                ticker = row["ticker"].upper().strip()
+                ticker = _normalize_user_ticker(row["ticker"])
                 _upsert_ativo_minimo(conn, ticker)
                 conn.execute(
                     """
@@ -293,7 +288,7 @@ def listar_ativos_com_metricas_recentes():
 
 
 def obter_historico_preco(ticker: str, limite: int = 30):
-    ticker_db = _to_storage_ticker(ticker)
+    ticker_db = _normalize_user_ticker(ticker)
     with get_connection() as conn:
         rows = conn.execute(
             """

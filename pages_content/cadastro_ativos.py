@@ -168,7 +168,7 @@ def _tab_novo():
                 "Ticker *",
                 placeholder="Ex: MXRF11",
                 max_chars=6,
-                help="Digite apenas o ticker base com 6 caracteres (ex.: MXRF11). O sufixo .SA é adicionado internamente.",
+                help="Digite apenas o ticker com 6 caracteres (ex.: MXRF11).",
             )
 
         with col2:

@@ -46,7 +46,6 @@ def setup_database(verbose: bool = True):
     cursor.execute("PRAGMA foreign_keys = ON;")
 
     # 1. TABELA DE ATIVOS
-    # Aceita ticker no formato B3 + sufixo (ex.: HGLG11.SA)
     cursor.execute(
         '''
         CREATE TABLE IF NOT EXISTS ativos (
