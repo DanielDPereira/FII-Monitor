@@ -3,11 +3,24 @@ import pandas as pd
 from pathlib import Path
 
 
+def normalize_ticker(ticker: str) -> str:
+    ticker_norm = (ticker or "").strip().upper()
+    if ticker_norm.endswith(".SA"):
+        return ticker_norm[:-3]
+    return ticker_norm
+
+
+def to_yfinance_ticker(ticker: str) -> str:
+    return f"{normalize_ticker(ticker)}.SA"
+
+
 def get_fii_data(ticker: str):
+    ticker_base = normalize_ticker(ticker)
+    ticker_yf_symbol = to_yfinance_ticker(ticker_base)
 
-    print(f"Coletando dados de {ticker}...")
+    print(f"Coletando dados de {ticker_base}...")
 
-    ticker_yf = yf.Ticker(ticker)
+    ticker_yf = yf.Ticker(ticker_yf_symbol)
 
     # =========================
     # HISTÓRICO DIÁRIO
@@ -35,7 +48,7 @@ def get_fii_data(ticker: str):
         "Dividends": "dividends"
     })
 
-    price_history["ticker"] = ticker
+    price_history["ticker"] = ticker_base
 
     price_history = price_history[
         [
@@ -73,7 +86,7 @@ def get_fii_data(ticker: str):
         "Volume": "volume"
     })
 
-    monthly_prices["ticker"] = ticker
+    monthly_prices["ticker"] = ticker_base
 
     monthly_prices = monthly_prices[
         [
@@ -100,7 +113,7 @@ def get_fii_data(ticker: str):
         "Dividends": "dividend"
     })
 
-    dividends_df["ticker"] = ticker
+    dividends_df["ticker"] = ticker_base
 
     dividends_df = dividends_df[
         [
@@ -123,7 +136,7 @@ def get_fii_data(ticker: str):
         "Dividends": "dividend"
     })
 
-    dividends_monthly_df["ticker"] = ticker
+    dividends_monthly_df["ticker"] = ticker_base
 
     dividends_monthly_df = dividends_monthly_df[
         [
@@ -168,7 +181,7 @@ def get_fii_data(ticker: str):
         dy_12m = dividend_12m / price
 
     metrics = pd.DataFrame([{
-        "ticker": ticker,
+        "ticker": ticker_base,
         "price": price,
         "book_value": book_value,
         "p_vp": p_vp,
@@ -204,7 +217,7 @@ def save_data(data, output_dir="data"):
 
 if __name__ == "__main__":
 
-    ticker = "HGLG11.SA"
+    ticker = "HGLG11"
 
     data = get_fii_data(ticker)
 
