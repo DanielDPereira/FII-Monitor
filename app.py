@@ -1,4 +1,7 @@
 import streamlit as st
+from database_setup import setup_database
+
+setup_database(verbose=False)
 
 st.set_page_config(
     page_title="FII Monitor",

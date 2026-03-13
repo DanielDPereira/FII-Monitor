@@ -174,9 +174,9 @@ def _tab_novo():
         with col1:
             ticker = st.text_input(
                 "Ticker *",
-                placeholder="Ex: MXRF11",
-                max_chars=6,
-                help="Código do FII na B3. Máximo 6 caracteres.",
+                placeholder="Ex: HGLG11.SA",
+                max_chars=15,
+                help="Código do FII no padrão B3/yfinance. Máximo 15 caracteres.",
             )
 
         with col2:
@@ -215,8 +215,8 @@ def _tab_novo():
         erros = []
         if not ticker:
             erros.append("O **Ticker** é obrigatório.")
-        elif len(ticker) > 6:
-            erros.append("O **Ticker** deve ter no máximo 6 caracteres.")
+        elif len(ticker) > 15:
+            erros.append("O **Ticker** deve ter no máximo 15 caracteres.")
         if not nome:
             erros.append("O **Nome do Fundo** é obrigatório.")
 

@@ -5,7 +5,7 @@ import sqlite3
 DB_PATH = os.path.join(os.path.dirname(__file__), "fii_monitor.db")
 
 
-def setup_database():
+def setup_database(verbose: bool = True):
     # Conecta ao arquivo do banco (será criado se não existir)
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
@@ -174,7 +174,8 @@ def setup_database():
 
     conn.commit()
     conn.close()
-    print(f"Banco de dados configurado com sucesso em: {DB_PATH}")
+    if verbose:
+        print(f"Banco de dados configurado com sucesso em: {DB_PATH}")
 
 
 if __name__ == "__main__":
