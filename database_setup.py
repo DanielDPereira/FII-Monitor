@@ -5,6 +5,38 @@ import sqlite3
 DB_PATH = os.path.join(os.path.dirname(__file__), "fii_monitor.db")
 
 
+def _column_exists(cursor, table_name: str, column_name: str) -> bool:
+    rows = cursor.execute(f"PRAGMA table_info({table_name})").fetchall()
+    return any(row[1] == column_name for row in rows)
+
+
+def _migrate_ativos_remove_preco_teto(conn, cursor):
+    """Remove coluna legado preco_teto de ativos, preservando dados."""
+    if not _column_exists(cursor, "ativos", "preco_teto"):
+        return
+
+    conn.execute("PRAGMA foreign_keys = OFF;")
+    cursor.execute("ALTER TABLE ativos RENAME TO ativos_old")
+    cursor.execute(
+        '''
+        CREATE TABLE ativos (
+            ticker TEXT PRIMARY KEY CHECK(length(ticker) <= 15),
+            nome TEXT NOT NULL,
+            setor TEXT
+        )
+        '''
+    )
+    cursor.execute(
+        '''
+        INSERT INTO ativos (ticker, nome, setor)
+        SELECT ticker, nome, setor
+        FROM ativos_old
+        '''
+    )
+    cursor.execute("DROP TABLE ativos_old")
+    conn.execute("PRAGMA foreign_keys = ON;")
+
+
 def setup_database(verbose: bool = True):
     # Conecta ao arquivo do banco (será criado se não existir)
     conn = sqlite3.connect(DB_PATH)
@@ -20,11 +52,13 @@ def setup_database(verbose: bool = True):
         CREATE TABLE IF NOT EXISTS ativos (
             ticker TEXT PRIMARY KEY CHECK(length(ticker) <= 15),
             nome TEXT NOT NULL,
-            setor TEXT,
-            preco_teto REAL DEFAULT 0.0
+            setor TEXT
         )
         '''
     )
+
+    # Migração para bancos legados que ainda possuem preco_teto em ativos.
+    _migrate_ativos_remove_preco_teto(conn, cursor)
 
     # 2. TABELA DE TRANSAÇÕES (carteira do usuário)
     cursor.execute(

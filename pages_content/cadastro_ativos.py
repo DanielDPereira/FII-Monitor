@@ -3,7 +3,6 @@ Página: Cadastro de Ativos (FIIs)
 """
 
 import streamlit as st
-import pandas as pd
 import sys
 import os
 
@@ -100,12 +99,10 @@ def _tab_lista():
         return
 
     # Métricas resumo
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     setores_unicos = len({a["setor"] for a in ativos if a["setor"]})
-    media_teto = sum(a["preco_teto"] for a in ativos) / len(ativos)
     col1.metric("Total de FIIs", len(ativos))
     col2.metric("Setores", setores_unicos)
-    col3.metric("Preço Teto Médio", f"R$ {media_teto:.2f}")
 
     st.markdown("---")
 
@@ -152,11 +149,6 @@ def _tab_lista():
                             {ativo['nome']}
                         </div>
                         {_badge_setor(ativo['setor']) if ativo['setor'] else ''}
-                        <hr style="border-color:#2d2d2d;margin:10px 0;">
-                        <div style="font-size:0.85rem;color:#ccc;">
-                            💰 Preço Teto:
-                            <strong style="color:#4CAF50;">R$ {ativo['preco_teto']:.2f}</strong>
-                        </div>
                     </div>
                     """,
                     unsafe_allow_html=True,
@@ -174,9 +166,9 @@ def _tab_novo():
         with col1:
             ticker = st.text_input(
                 "Ticker *",
-                placeholder="Ex: HGLG11.SA",
-                max_chars=15,
-                help="Código do FII no padrão B3/yfinance. Máximo 15 caracteres.",
+                placeholder="Ex: MXRF11",
+                max_chars=6,
+                help="Digite apenas o ticker base com 6 caracteres (ex.: MXRF11). O sufixo .SA é adicionado internamente.",
             )
 
         with col2:
@@ -186,23 +178,11 @@ def _tab_novo():
                 help="Nome completo do fundo.",
             )
 
-        col3, col4 = st.columns([2, 1])
-
-        with col3:
+        with st.container():
             setor = st.selectbox(
                 "Setor",
                 options=[""] + SETORES,
                 format_func=lambda x: "Selecione um setor..." if x == "" else x,
-            )
-
-        with col4:
-            preco_teto = st.number_input(
-                "Preço Teto (R$)",
-                min_value=0.0,
-                value=0.0,
-                step=0.01,
-                format="%.2f",
-                help="Preço máximo que você toparia pagar por uma cota.",
             )
 
         submitted = st.form_submit_button("💾 Cadastrar Ativo", use_container_width=True, type="primary")
@@ -215,8 +195,8 @@ def _tab_novo():
         erros = []
         if not ticker:
             erros.append("O **Ticker** é obrigatório.")
-        elif len(ticker) > 15:
-            erros.append("O **Ticker** deve ter no máximo 15 caracteres.")
+        elif len(ticker) != 6:
+            erros.append("O **Ticker** deve ter exatamente 6 caracteres (ex.: MXRF11).")
         if not nome:
             erros.append("O **Nome do Fundo** é obrigatório.")
 
@@ -228,7 +208,6 @@ def _tab_novo():
                 ticker=ticker,
                 nome=nome,
                 setor=setor if setor else "Outro",
-                preco_teto=preco_teto,
             )
             if ok:
                 st.success(f"✅ FII **{ticker}** cadastrado com sucesso!")
@@ -264,14 +243,6 @@ def _tab_editar():
                     setor_idx = opts.index(ativo["setor"])
                 setor_edit = st.selectbox("Setor", options=opts, index=setor_idx)
 
-                preco_edit = st.number_input(
-                    "Preço Teto (R$)",
-                    min_value=0.0,
-                    value=float(ativo["preco_teto"]),
-                    step=0.01,
-                    format="%.2f",
-                )
-
                 salvar = st.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True)
 
             if salvar:
@@ -283,7 +254,6 @@ def _tab_editar():
                         ticker=ticker_sel,
                         nome=nome_edit,
                         setor=setor_edit if setor_edit else "Outro",
-                        preco_teto=preco_edit,
                     )
                     st.success(f"✅ FII **{ticker_sel}** atualizado com sucesso!")
                     st.rerun()

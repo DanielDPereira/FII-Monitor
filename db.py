@@ -7,6 +7,16 @@ from datetime import datetime
 DB_PATH = os.path.join(os.path.dirname(__file__), "fii_monitor.db")
 
 
+def _to_storage_ticker(ticker: str) -> str:
+    """Converte ticker digitado (ex.: MXRF11) para formato interno (MXRF11.SA)."""
+    ticker_norm = (ticker or "").strip().upper()
+    if ticker_norm.endswith(".SA"):
+        base = ticker_norm[:-3]
+    else:
+        base = ticker_norm
+    return f"{base}.SA"
+
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -19,7 +29,7 @@ def get_connection():
 def listar_ativos():
     with get_connection() as conn:
         rows = conn.execute(
-            "SELECT ticker, nome, setor, preco_teto FROM ativos ORDER BY ticker"
+            "SELECT ticker, nome, setor FROM ativos ORDER BY ticker"
         ).fetchall()
     return [dict(r) for r in rows]
 
@@ -27,19 +37,20 @@ def listar_ativos():
 def buscar_ativo(ticker: str):
     with get_connection() as conn:
         row = conn.execute(
-            "SELECT ticker, nome, setor, preco_teto FROM ativos WHERE ticker = ?",
-            (ticker.upper(),),
+            "SELECT ticker, nome, setor FROM ativos WHERE ticker = ?",
+            (_to_storage_ticker(ticker),),
         ).fetchone()
     return dict(row) if row else None
 
 
-def inserir_ativo(ticker: str, nome: str, setor: str, preco_teto: float) -> bool:
+def inserir_ativo(ticker: str, nome: str, setor: str) -> bool:
     """Retorna True se inserido, False se ticker já existe."""
     try:
+        ticker_db = _to_storage_ticker(ticker)
         with get_connection() as conn:
             conn.execute(
-                "INSERT INTO ativos (ticker, nome, setor, preco_teto) VALUES (?, ?, ?, ?)",
-                (ticker.upper(), nome, setor, preco_teto),
+                "INSERT INTO ativos (ticker, nome, setor) VALUES (?, ?, ?)",
+                (ticker_db, nome, setor),
             )
             conn.commit()
         return True
@@ -47,29 +58,31 @@ def inserir_ativo(ticker: str, nome: str, setor: str, preco_teto: float) -> bool
         return False
 
 
-def atualizar_ativo(ticker: str, nome: str, setor: str, preco_teto: float):
+def atualizar_ativo(ticker: str, nome: str, setor: str):
+    ticker_db = _to_storage_ticker(ticker)
     with get_connection() as conn:
         conn.execute(
-            "UPDATE ativos SET nome = ?, setor = ?, preco_teto = ? WHERE ticker = ?",
-            (nome, setor, preco_teto, ticker.upper()),
+            "UPDATE ativos SET nome = ?, setor = ? WHERE ticker = ?",
+            (nome, setor, ticker_db),
         )
         conn.commit()
 
 
 def deletar_ativo(ticker: str):
+    ticker_db = _to_storage_ticker(ticker)
     with get_connection() as conn:
-        conn.execute("DELETE FROM ativos WHERE ticker = ?", (ticker.upper(),))
+        conn.execute("DELETE FROM ativos WHERE ticker = ?", (ticker_db,))
         conn.commit()
 
 
 # ── DADOS DE MERCADO (YFINANCE) ────────────────────────────────────────────
 
 def _upsert_ativo_minimo(conn, ticker: str):
-    ticker_norm = ticker.upper().strip()
+    ticker_norm = _to_storage_ticker(ticker)
     conn.execute(
         """
-        INSERT INTO ativos (ticker, nome, setor, preco_teto)
-        VALUES (?, ?, 'Outro', 0)
+        INSERT INTO ativos (ticker, nome, setor)
+        VALUES (?, ?, 'Outro')
         ON CONFLICT(ticker) DO NOTHING
         """,
         (ticker_norm, ticker_norm),
@@ -260,7 +273,6 @@ def listar_ativos_com_metricas_recentes():
                 a.ticker,
                 a.nome,
                 a.setor,
-                a.preco_teto,
                 m.price,
                 m.p_vp,
                 m.dy_12m,
@@ -281,6 +293,7 @@ def listar_ativos_com_metricas_recentes():
 
 
 def obter_historico_preco(ticker: str, limite: int = 30):
+    ticker_db = _to_storage_ticker(ticker)
     with get_connection() as conn:
         rows = conn.execute(
             """
@@ -290,6 +303,6 @@ def obter_historico_preco(ticker: str, limite: int = 30):
             ORDER BY date DESC
             LIMIT ?
             """,
-            (ticker.upper(), int(limite)),
+            (ticker_db, int(limite)),
         ).fetchall()
     return [dict(r) for r in rows]
