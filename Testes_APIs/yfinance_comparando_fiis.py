@@ -4,10 +4,22 @@ import pandas as pd
 pd.set_option("display.max_columns", None)
 pd.set_option("display.width", None)
 
+
+def normalize_ticker(ticker):
+    ticker_norm = (ticker or "").strip().upper()
+    if ticker_norm.endswith(".SA"):
+        return ticker_norm[:-3]
+    return ticker_norm
+
+
+def to_yfinance_ticker(ticker):
+    return f"{normalize_ticker(ticker)}.SA"
+
 def get_fii_fundamentals(ticker):
+    ticker_base = normalize_ticker(ticker)
 
     try:
-        fii = yf.Ticker(f"{ticker}.SA")
+        fii = yf.Ticker(to_yfinance_ticker(ticker_base))
         info = fii.info
 
         price = info.get("regularMarketPrice")
@@ -18,7 +30,7 @@ def get_fii_fundamentals(ticker):
         dy = dividend_sum / price if price else None
 
         return {
-            "ticker": ticker,
+            "ticker": ticker_base,
             "price": price,
             "pvp": info.get("priceToBook"),
             "dy_12m": dy,
@@ -31,7 +43,7 @@ def get_fii_fundamentals(ticker):
         }
 
     except Exception as e:
-        print(f"Erro ao buscar {ticker}: {e}")
+        print(f"Erro ao buscar {ticker_base}: {e}")
         return None
 
 

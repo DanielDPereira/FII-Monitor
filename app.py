@@ -1,3 +1,27 @@
 import streamlit as st
+from database_setup import setup_database
 
-st.title("FII Monitor")
+setup_database(verbose=False)
+
+st.set_page_config(
+    page_title="FII Monitor",
+    page_icon="🏢",
+    layout="wide",
+    initial_sidebar_state="expanded",
+)
+
+# Importa as páginas
+from pages_content import cadastro_ativos
+
+# Sidebar de navegação
+st.sidebar.title("🏢 FII Monitor")
+st.sidebar.markdown("---")
+
+pagina = st.sidebar.radio(
+    "Navegação",
+    ["📋 Cadastro de Ativos"],
+    label_visibility="collapsed",
+)
+
+if pagina == "📋 Cadastro de Ativos":
+    cadastro_ativos.render()
