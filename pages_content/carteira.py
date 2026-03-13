@@ -121,18 +121,21 @@ def _tab_transacao():
         enviar = st.form_submit_button("💾 Salvar Transação", use_container_width=True, type="primary")
 
     if enviar:
-        ok = db.inserir_transacao(
-            ticker=ticker,
-            data=data_tx.isoformat(),
-            tipo=tipo,
-            quantidade=int(quantidade),
-            preco_unitario=float(preco_unitario),
-        )
-        if ok:
-            st.success(f"Transação de {tipo} para {ticker} registrada com sucesso.")
-            st.rerun()
-        else:
-            st.error("Não foi possível salvar: o ativo informado não existe.")
+        try:
+            ok = db.inserir_transacao(
+                ticker=ticker,
+                data=data_tx.isoformat(),
+                tipo=tipo,
+                quantidade=int(quantidade),
+                preco_unitario=float(preco_unitario),
+            )
+            if ok:
+                st.success(f"Transação de {tipo} para {ticker} registrada com sucesso.")
+                st.rerun()
+            else:
+                st.error("Não foi possível salvar: o ativo informado não existe.")
+        except ValueError as exc:
+            st.error(f"Não foi possível salvar a transação: {str(exc)}")
 
 
 def _tab_historico():

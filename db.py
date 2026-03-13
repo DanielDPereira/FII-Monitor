@@ -333,6 +333,24 @@ def inserir_transacao(
         if not ativo:
             return False
 
+        if tipo_db == "VENDA":
+            saldo_row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN tipo = 'COMPRA' THEN quantidade ELSE 0 END), 0)
+                    - COALESCE(SUM(CASE WHEN tipo = 'VENDA' THEN quantidade ELSE 0 END), 0)
+                    AS saldo
+                FROM transacoes
+                WHERE ticker = ?
+                """,
+                (ticker_db,),
+            ).fetchone()
+            saldo_atual = int(saldo_row["saldo"] if saldo_row else 0)
+            if int(quantidade) > saldo_atual:
+                raise ValueError(
+                    f"venda inválida para {ticker_db}: saldo atual é {saldo_atual} cota(s)"
+                )
+
         conn.execute(
             """
             INSERT INTO transacoes (ticker, data, tipo, quantidade, preco_unitario)
