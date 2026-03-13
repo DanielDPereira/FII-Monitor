@@ -48,6 +48,28 @@ def render():
 
 
 def _tab_resumo():
+    col_btn_1, col_btn_2 = st.columns([1, 3])
+    with col_btn_1:
+        if st.button("🔄 Atualizar dados", use_container_width=True):
+            ativos = db.listar_ativos()
+            tickers = [a["ticker"] for a in ativos]
+            if not tickers:
+                st.warning("Cadastre ao menos um ativo para atualizar dados de mercado.")
+            else:
+                with st.spinner("Buscando dados no yfinance..."):
+                    try:
+                        counters = db.atualizar_dados_mercado_yfinance(tickers)
+                        proventos_count = db.sincronizar_proventos_automaticos()
+                        st.success(
+                            "Atualização concluída "
+                            f"(tickers: {counters['tickers_processados']}, "
+                            f"eventos de dividendos: {counters['fii_dividends']}, "
+                            f"proventos calculados: {proventos_count})."
+                        )
+                    except Exception as exc:
+                        st.error(f"Falha ao atualizar dados de mercado: {str(exc)}")
+
+    db.sincronizar_proventos_automaticos()
     resumo = db.resumo_carteira()
     posicoes = db.calcular_posicoes_carteira()
 

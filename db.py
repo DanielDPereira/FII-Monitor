@@ -12,6 +12,33 @@ def _normalize_user_ticker(ticker: str) -> str:
     return (ticker or "").strip().upper()
 
 
+def _ticker_base(ticker: str) -> str:
+    """Remove sufixo .SA para compatibilizar ticker de mercado e carteira."""
+    t = _normalize_user_ticker(ticker)
+    return t[:-3] if t.endswith(".SA") else t
+
+
+def _resolve_ticker_fk(conn, ticker: str) -> str:
+    """Resolve ticker existente em ativos ignorando sufixo .SA para manter FK válida."""
+    ticker_base = _ticker_base(ticker)
+    row = conn.execute(
+        """
+        SELECT ticker
+        FROM ativos
+        WHERE UPPER(REPLACE(ticker, '.SA', '')) = ?
+        ORDER BY CASE WHEN UPPER(ticker) = ? THEN 0 ELSE 1 END
+        LIMIT 1
+        """,
+        (ticker_base, ticker_base),
+    ).fetchone()
+
+    if row:
+        return row["ticker"]
+
+    _upsert_ativo_minimo(conn, ticker_base)
+    return ticker_base
+
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -259,6 +286,110 @@ def importar_dados_mercado_csv(data_dir: str) -> dict:
     return counters
 
 
+def atualizar_dados_mercado_yfinance(tickers: list[str]) -> dict:
+    """
+    Atualiza dividendos e metricas recentes diretamente do yfinance
+    para os tickers informados (formato base, ex.: MXRF11).
+    """
+    if not tickers:
+        return {"fii_dividends": 0, "fii_metrics": 0, "tickers_processados": 0}
+
+    import yfinance as yf
+
+    counters = {"fii_dividends": 0, "fii_metrics": 0, "tickers_processados": 0}
+
+    with get_connection() as conn:
+        for ticker in tickers:
+            ticker_base = _ticker_base(ticker)
+            ticker_fk = _resolve_ticker_fk(conn, ticker_base)
+            ticker_yf = f"{ticker_base}.SA"
+            yf_obj = yf.Ticker(ticker_yf)
+
+            # Dividendos por evento
+            try:
+                dividends = yf_obj.dividends
+            except Exception:
+                dividends = None
+
+            if dividends is not None and not dividends.empty:
+                for date_idx, dividend_value in dividends.items():
+                    date_str = str(date_idx)[:10]
+                    dividend = float(dividend_value or 0)
+                    if dividend <= 0:
+                        continue
+
+                    conn.execute(
+                        """
+                        INSERT INTO fii_dividends (ticker, date, dividend)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(ticker, date) DO UPDATE SET
+                            dividend = excluded.dividend
+                        """,
+                        (ticker_fk, date_str, dividend),
+                    )
+                    counters["fii_dividends"] += 1
+
+            # Preco atual e metricas basicas
+            price = None
+            try:
+                hist = yf_obj.history(period="5d", interval="1d", auto_adjust=False, actions=False)
+                if hist is not None and not hist.empty:
+                    close_series = hist["Close"].dropna()
+                    if not close_series.empty:
+                        price = float(close_series.iloc[-1])
+            except Exception:
+                pass
+
+            book_value = None
+            market_cap = None
+            avg_volume = None
+            dividend_yield_api = None
+            try:
+                info = yf_obj.info or {}
+                book_value = info.get("bookValue")
+                market_cap = info.get("marketCap")
+                avg_volume = info.get("averageVolume")
+                dividend_yield_api = info.get("dividendYield")
+                if price is None:
+                    price = info.get("regularMarketPrice")
+            except Exception:
+                pass
+
+            p_vp = None
+            if price and book_value:
+                try:
+                    p_vp = float(price) / float(book_value)
+                except Exception:
+                    p_vp = None
+
+            conn.execute(
+                """
+                INSERT INTO fii_metrics
+                (ticker, collected_at, price, book_value, p_vp, dividend_yield_api,
+                 dividend_12m, dy_12m, market_cap, avg_volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ticker_fk,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    float(price) if price is not None else None,
+                    float(book_value) if book_value is not None else None,
+                    float(p_vp) if p_vp is not None else None,
+                    float(dividend_yield_api) if dividend_yield_api is not None else None,
+                    None,
+                    None,
+                    int(market_cap) if market_cap is not None else None,
+                    int(avg_volume) if avg_volume is not None else None,
+                ),
+            )
+            counters["fii_metrics"] += 1
+            counters["tickers_processados"] += 1
+
+        conn.commit()
+
+    return counters
+
+
 def listar_ativos_com_metricas_recentes():
     """Lista ativos junto com último snapshot de métricas, quando existir."""
     with get_connection() as conn:
@@ -391,6 +522,64 @@ def deletar_transacao(transacao_id: int):
         conn.commit()
 
 
+def sincronizar_proventos_automaticos() -> int:
+    """
+    Recalcula a tabela proventos usando eventos de dividendos (yfinance)
+    e a posicao historica em cada data de pagamento.
+
+    Retorna a quantidade de linhas gravadas em proventos.
+    """
+    with get_connection() as conn:
+        conn.execute("DELETE FROM proventos")
+
+        rows = conn.execute(
+            """
+            SELECT d.ticker, d.date, d.dividend
+            FROM fii_dividends d
+            ORDER BY d.ticker, d.date
+            """
+        ).fetchall()
+
+        inserted = 0
+        for row in rows:
+            ticker = _ticker_base(row["ticker"])
+            data_pagamento = row["date"]
+            dividendo_por_cota = float(row["dividend"] or 0)
+
+            if dividendo_por_cota <= 0:
+                continue
+
+            saldo_row = conn.execute(
+                """
+                SELECT COALESCE(
+                    SUM(CASE WHEN tipo = 'COMPRA' THEN quantidade ELSE -quantidade END),
+                    0
+                ) AS saldo
+                FROM transacoes
+                WHERE UPPER(REPLACE(ticker, '.SA', '')) = ? AND data <= ?
+                """,
+                (ticker, data_pagamento),
+            ).fetchone()
+
+            saldo = int(saldo_row["saldo"] if saldo_row else 0)
+            if saldo <= 0:
+                continue
+
+            valor_total = round(saldo * dividendo_por_cota, 2)
+            conn.execute(
+                """
+                INSERT INTO proventos (ticker, data_pagamento, valor_total)
+                VALUES (?, ?, ?)
+                """,
+                (ticker, data_pagamento, valor_total),
+            )
+            inserted += 1
+
+        conn.commit()
+
+    return inserted
+
+
 def calcular_posicoes_carteira():
     """
     Consolida carteira por ticker a partir das transacoes e do ultimo preco coletado.
@@ -432,9 +621,9 @@ def calcular_posicoes_carteira():
         ).fetchall()
 
     ativos_map = {row["ticker"]: dict(row) for row in ativos}
-    precos_map = {row["ticker"]: row["price"] for row in precos_rows}
+    precos_map = { _ticker_base(row["ticker"]): row["price"] for row in precos_rows }
     proventos_map = {
-        row["ticker"]: float(row["proventos_acumulados"])
+        _ticker_base(row["ticker"]): float(row["proventos_acumulados"])
         for row in proventos_rows
     }
 
