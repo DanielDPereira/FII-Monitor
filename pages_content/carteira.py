@@ -51,16 +51,19 @@ def _tab_resumo():
     resumo = db.resumo_carteira()
     posicoes = db.calcular_posicoes_carteira()
 
-    col1, col2, col3, col4 = st.columns(4)
+    col1, col2, col3, col4, col5 = st.columns(5)
     col1.metric("Ativos em Carteira", resumo["ativos_em_carteira"])
     col2.metric("Custo Total", _fmt_brl(resumo["custo_total"]))
     col3.metric("Valor Atual", _fmt_brl(resumo["valor_atual_total"]))
+    col4.metric("Proventos Acumulados", _fmt_brl(resumo["proventos_acumulados_total"]))
 
     pl_total = resumo["pl_total"]
     delta_total = None
     if resumo["custo_total"] > 0:
         delta_total = _fmt_pct((pl_total / resumo["custo_total"]) * 100)
-    col4.metric("P/L Total", _fmt_brl(pl_total), delta=delta_total)
+    col5.metric("Resultado Total", _fmt_brl(pl_total), delta=delta_total)
+
+    st.caption("Preço Atual = preço unitário da cota. Valor Atual = preço unitário multiplicado pela quantidade em carteira.")
 
     st.markdown("---")
 
@@ -84,8 +87,9 @@ def _tab_resumo():
                 "Custo": _fmt_brl(p["custo_posicao"]),
                 "Preço Atual": _fmt_brl(p["preco_atual"]),
                 "Valor Atual": _fmt_brl(p["valor_atual"]),
-                "P/L": _fmt_brl(p["pl_nao_realizado"]),
-                "P/L %": _fmt_pct(pl_pct),
+                "Proventos Acumulados": _fmt_brl(p["proventos_acumulados"]),
+                "Resultado": _fmt_brl(p["pl_nao_realizado"]),
+                "Resultado %": _fmt_pct(pl_pct),
             }
         )
 

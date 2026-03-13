@@ -423,8 +423,20 @@ def calcular_posicoes_carteira():
             """
         ).fetchall()
 
+        proventos_rows = conn.execute(
+            """
+            SELECT ticker, ROUND(COALESCE(SUM(valor_total), 0), 2) AS proventos_acumulados
+            FROM proventos
+            GROUP BY ticker
+            """
+        ).fetchall()
+
     ativos_map = {row["ticker"]: dict(row) for row in ativos}
     precos_map = {row["ticker"]: row["price"] for row in precos_rows}
+    proventos_map = {
+        row["ticker"]: float(row["proventos_acumulados"])
+        for row in proventos_rows
+    }
 
     consolidado = {}
     for tx in transacoes:
@@ -491,6 +503,7 @@ def calcular_posicoes_carteira():
                 "valor_atual": round(valor_atual, 2) if valor_atual is not None else None,
                 "pl_nao_realizado": round(pl_nao_realizado, 2) if pl_nao_realizado is not None else None,
                 "lucro_realizado": round(pos["lucro_realizado"], 2),
+                "proventos_acumulados": round(proventos_map.get(ticker, 0.0), 2),
             }
         )
 
@@ -507,10 +520,15 @@ def resumo_carteira():
         2,
     )
     pl_total = round(valor_atual_total - custo_total, 2)
+    proventos_acumulados_total = round(
+        sum(p["proventos_acumulados"] for p in posicoes),
+        2,
+    )
 
     return {
         "ativos_em_carteira": len(posicoes),
         "custo_total": custo_total,
         "valor_atual_total": valor_atual_total,
         "pl_total": pl_total,
+        "proventos_acumulados_total": proventos_acumulados_total,
     }
