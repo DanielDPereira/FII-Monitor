@@ -178,7 +178,7 @@ def _tab_novo():
                 format_func=lambda x: "Selecione um setor..." if x == "" else x,
             )
 
-        submitted = st.form_submit_button("💾 Cadastrar Ativo", use_container_width=True, type="primary")
+        submitted = st.form_submit_button("💾 Cadastrar Ativo", width="stretch", type="primary")
 
     if submitted:
         # Validações
@@ -244,7 +244,7 @@ def _tab_editar():
                     setor_idx = opts.index(ativo["setor"])
                 setor_edit = st.selectbox("Setor", options=opts, index=setor_idx)
 
-                salvar = st.form_submit_button("💾 Salvar Alterações", type="primary", use_container_width=True)
+                salvar = st.form_submit_button("💾 Salvar Alterações", type="primary", width="stretch")
 
             if salvar:
                 nome_edit = nome_edit.strip()

@@ -60,7 +60,7 @@ def render():
 def _tab_resumo():
     col_btn_1, col_btn_2 = st.columns([1, 3])
     with col_btn_1:
-        if st.button("🔄 Atualizar dados", use_container_width=True):
+        if st.button("🔄 Atualizar dados", width="stretch"):
             ativos = db.listar_ativos()
             tickers = [a["ticker"] for a in ativos]
             if not tickers:
@@ -99,7 +99,7 @@ def _tab_resumo():
         delta_total = _fmt_pct((pl_total / resumo["custo_total"]) * 100)
     col5.metric("Resultado Total", _fmt_brl(pl_total), delta=delta_total)
 
-    st.caption("Preço Atual = preço unitário da cota. Valor Atual = preço unitário multiplicado pela quantidade em carteira.")
+    #st.caption("Preço Atual = preço unitário da cota. Valor Atual = preço unitário multiplicado pela quantidade em carteira.")
 
     st.markdown("---")
 
@@ -129,7 +129,7 @@ def _tab_resumo():
             }
         )
 
-    st.dataframe(tabela, use_container_width=True, hide_index=True)
+    st.dataframe(tabela, width="stretch", hide_index=True)
 
 
 def _tab_transacao():
@@ -158,7 +158,7 @@ def _tab_transacao():
             format="%.2f",
         )
 
-        enviar = st.form_submit_button("💾 Salvar Transação", use_container_width=True, type="primary")
+        enviar = st.form_submit_button("💾 Salvar Transação", width="stretch", type="primary")
 
     if enviar:
         try:
@@ -200,7 +200,7 @@ def _tab_historico():
             }
         )
 
-    st.dataframe(tabela, use_container_width=True, hide_index=True)
+    st.dataframe(tabela, width="stretch", hide_index=True)
 
     st.markdown("---")
     st.caption("Exclusão de transação é permanente e altera os cálculos da carteira.")
