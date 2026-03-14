@@ -80,6 +80,71 @@ def inserir_ativo(ticker: str, nome: str, setor: str) -> bool:
         return False
 
 
+def consultar_ativo_yfinance(ticker: str) -> dict:
+    """
+    Valida ticker no yfinance e retorna nome amigavel do ativo.
+
+    Retorno:
+    - ok: bool
+    - ticker: str (normalizado em formato base, sem .SA)
+    - nome: str | None
+    - erro: str | None
+    """
+    import yfinance as yf
+
+    ticker_base = _ticker_base(ticker)
+    if not ticker_base:
+        return {
+            "ok": False,
+            "ticker": None,
+            "nome": None,
+            "erro": "Ticker inválido.",
+        }
+
+    symbol = f"{ticker_base}.SA"
+
+    try:
+        yf_obj = yf.Ticker(symbol)
+
+        info = {}
+        try:
+            info = yf_obj.info or {}
+        except Exception:
+            info = {}
+
+        hist = None
+        try:
+            hist = yf_obj.history(period="5d", interval="1d", auto_adjust=False, actions=False)
+        except Exception:
+            hist = None
+
+        has_history = hist is not None and not hist.empty
+        has_symbol_info = bool(info.get("symbol") or info.get("shortName") or info.get("longName"))
+
+        if not has_history and not has_symbol_info:
+            return {
+                "ok": False,
+                "ticker": ticker_base,
+                "nome": None,
+                "erro": "Ativo não encontrado no yfinance para este ticker.",
+            }
+
+        nome = info.get("shortName") or info.get("longName") or ticker_base
+        return {
+            "ok": True,
+            "ticker": ticker_base,
+            "nome": str(nome).strip() if nome else ticker_base,
+            "erro": None,
+        }
+    except Exception:
+        return {
+            "ok": False,
+            "ticker": ticker_base,
+            "nome": None,
+            "erro": "Não foi possível validar o ticker agora. Tente novamente em instantes.",
+        }
+
+
 def atualizar_ativo(ticker: str, nome: str, setor: str):
     ticker_db = _normalize_user_ticker(ticker)
     with get_connection() as conn:

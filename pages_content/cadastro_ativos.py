@@ -16,6 +16,7 @@ SETORES = [
     "Lajes Corporativas",
     "Shoppings",
     "Logística",
+    "Fiagro",
     "Residencial",
     "Recebíveis (CRI)",
     "Híbrido",
@@ -34,6 +35,7 @@ def _badge_setor(setor: str) -> str:
         "Lajes Corporativas":   "#4A90D9",
         "Shoppings":            "#E07B39",
         "Logística":            "#5CB85C",
+        "Fiagro":               "#2D7D46",
         "Residencial":          "#9B59B6",
         "Recebíveis (CRI)":     "#F0AD4E",
         "Híbrido":              "#1ABC9C",
@@ -158,25 +160,16 @@ def _tab_lista():
 # ─── Tab: Novo ───────────────────────────────────────────────────────────────
 
 def _tab_novo():
-    st.subheader("Cadastrar Novo FII")
+    st.subheader("Cadastrar Novo Ativo")
+    st.caption("Informe apenas o ticker. O nome do ativo será buscado automaticamente no yfinance.")
 
     with st.form("form_novo_ativo", clear_on_submit=True):
-        col1, col2 = st.columns([1, 2])
-
-        with col1:
-            ticker = st.text_input(
-                "Ticker *",
-                placeholder="Ex: MXRF11",
-                max_chars=6,
-                help="Digite apenas o ticker com 6 caracteres (ex.: MXRF11).",
-            )
-
-        with col2:
-            nome = st.text_input(
-                "Nome do Fundo *",
-                placeholder="Ex: Maxi Renda FII",
-                help="Nome completo do fundo.",
-            )
+        ticker = st.text_input(
+            "Ticker *",
+            placeholder="Ex: MXRF11",
+            max_chars=12,
+            help="Digite o ticker com ou sem .SA (ex.: MXRF11 ou MXRF11.SA).",
+        )
 
         with st.container():
             setor = st.selectbox(
@@ -190,30 +183,38 @@ def _tab_novo():
     if submitted:
         # Validações
         ticker = ticker.strip().upper()
-        nome = nome.strip()
 
         erros = []
         if not ticker:
             erros.append("O **Ticker** é obrigatório.")
-        elif len(ticker) != 6:
-            erros.append("O **Ticker** deve ter exatamente 6 caracteres (ex.: MXRF11).")
-        if not nome:
-            erros.append("O **Nome do Fundo** é obrigatório.")
 
         if erros:
             for e in erros:
                 st.error(e)
         else:
+            ativo_yf = db.consultar_ativo_yfinance(ticker)
+            if not ativo_yf["ok"]:
+                st.error(f"❌ {ativo_yf['erro']}")
+                return
+
+            ticker_validado = ativo_yf["ticker"]
+            nome_ativo = ativo_yf["nome"]
             ok = db.inserir_ativo(
-                ticker=ticker,
-                nome=nome,
+                ticker=ticker_validado,
+                nome=nome_ativo,
                 setor=setor if setor else "Outro",
             )
             if ok:
-                st.success(f"✅ FII **{ticker}** cadastrado com sucesso!")
+                st.success(
+                    f"✅ Ativo **{ticker_validado}** cadastrado com sucesso! "
+                    f"Nome identificado: **{nome_ativo}**."
+                )
                 st.balloons()
             else:
-                st.error(f"❌ O ticker **{ticker}** já está cadastrado. Use a aba **✏️ Editar** para alterá-lo.")
+                st.error(
+                    f"❌ O ticker **{ticker_validado}** já está cadastrado. "
+                    "Use a aba **✏️ Editar** para alterá-lo."
+                )
 
 
 # ─── Tab: Editar ─────────────────────────────────────────────────────────────
