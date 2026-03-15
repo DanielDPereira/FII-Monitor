@@ -83,7 +83,6 @@ def _tab_resumo():
         ultima_atualizacao = db.obter_ultima_atualizacao_mercado()
         st.caption(f"Última atualização de mercado: {_fmt_datetime_br(ultima_atualizacao)}")
 
-    db.sincronizar_proventos_automaticos()
     resumo = db.resumo_carteira()
     posicoes = db.calcular_posicoes_carteira()
 
@@ -170,6 +169,7 @@ def _tab_transacao():
                 preco_unitario=float(preco_unitario),
             )
             if ok:
+                db.sincronizar_proventos_automaticos()
                 st.success(f"Transação de {tipo} para {ticker} registrada com sucesso.")
                 st.rerun()
             else:
@@ -266,6 +266,7 @@ def _tab_historico():
                         preco_unitario=float(preco_edit),
                     )
                     if ok:
+                        db.sincronizar_proventos_automaticos()
                         st.session_state["ultima_transacao_editada_id"] = tx_edit_id
                         st.session_state["ultima_transacao_editada_em"] = datetime.now().strftime("%d/%m/%Y %H:%M:%S")
                         st.success("Transação atualizada com sucesso.")
@@ -283,5 +284,6 @@ def _tab_historico():
 
     if st.button("🗑️ Excluir Transação", disabled=not confirmar):
         db.deletar_transacao(tx_id)
+        db.sincronizar_proventos_automaticos()
         st.success("Transação excluída com sucesso.")
         st.rerun()
