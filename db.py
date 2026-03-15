@@ -523,6 +523,27 @@ def inserir_transacao(
     ticker_db = _normalize_user_ticker(ticker)
     tipo_db = (tipo or "").strip().upper()
 
+    return _salvar_transacao(
+        transacao_id=None,
+        ticker=ticker_db,
+        data=data,
+        tipo=tipo_db,
+        quantidade=quantidade,
+        preco_unitario=preco_unitario,
+    )
+
+
+def _salvar_transacao(
+    transacao_id: int | None,
+    ticker: str,
+    data: str,
+    tipo: str,
+    quantidade: int,
+    preco_unitario: float,
+) -> bool:
+    ticker_db = _normalize_user_ticker(ticker)
+    tipo_db = (tipo or "").strip().upper()
+
     if tipo_db not in ("COMPRA", "VENDA"):
         raise ValueError("tipo deve ser COMPRA ou VENDA")
 
@@ -549,8 +570,9 @@ def inserir_transacao(
                     AS saldo
                 FROM transacoes
                 WHERE ticker = ?
+                  AND (? IS NULL OR id <> ?)
                 """,
-                (ticker_db,),
+                (ticker_db, transacao_id, transacao_id),
             ).fetchone()
             saldo_atual = int(saldo_row["saldo"] if saldo_row else 0)
             if int(quantidade) > saldo_atual:
@@ -558,15 +580,63 @@ def inserir_transacao(
                     f"venda inválida para {ticker_db}: saldo atual é {saldo_atual} cota(s)"
                 )
 
-        conn.execute(
-            """
-            INSERT INTO transacoes (ticker, data, tipo, quantidade, preco_unitario)
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (ticker_db, data, tipo_db, int(quantidade), float(preco_unitario)),
-        )
+        if transacao_id is None:
+            conn.execute(
+                """
+                INSERT INTO transacoes (ticker, data, tipo, quantidade, preco_unitario)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (ticker_db, data, tipo_db, int(quantidade), float(preco_unitario)),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE transacoes
+                SET ticker = ?, data = ?, tipo = ?, quantidade = ?, preco_unitario = ?
+                WHERE id = ?
+                """,
+                (
+                    ticker_db,
+                    data,
+                    tipo_db,
+                    int(quantidade),
+                    float(preco_unitario),
+                    int(transacao_id),
+                ),
+            )
         conn.commit()
     return True
+
+
+def buscar_transacao(transacao_id: int):
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, ticker, data, tipo, quantidade, preco_unitario
+            FROM transacoes
+            WHERE id = ?
+            """,
+            (int(transacao_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def atualizar_transacao(
+    transacao_id: int,
+    ticker: str,
+    data: str,
+    tipo: str,
+    quantidade: int,
+    preco_unitario: float,
+) -> bool:
+    return _salvar_transacao(
+        transacao_id=int(transacao_id),
+        ticker=ticker,
+        data=data,
+        tipo=tipo,
+        quantidade=quantidade,
+        preco_unitario=preco_unitario,
+    )
 
 
 def listar_transacoes(ticker: str = None, limite: int = 500):

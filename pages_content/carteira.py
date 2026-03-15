@@ -182,6 +182,7 @@ def _tab_historico():
     st.subheader("Histórico de Transações")
 
     transacoes = db.listar_transacoes(limite=1000)
+    ativos = db.listar_ativos()
     if not transacoes:
         st.info("Nenhuma transação registrada ainda.", icon="🧾")
         return
@@ -203,9 +204,70 @@ def _tab_historico():
     st.dataframe(tabela, width="stretch", hide_index=True)
 
     st.markdown("---")
-    st.caption("Exclusão de transação é permanente e altera os cálculos da carteira.")
+    st.markdown("### Editar Transação")
 
     ids = [tx["id"] for tx in transacoes]
+    tx_edit_id = st.selectbox("Selecionar ID para editar", options=ids, key="edit_tx_id")
+    transacao = db.buscar_transacao(tx_edit_id)
+
+    if transacao:
+        tickers = [a["ticker"] for a in ativos]
+        ticker_index = tickers.index(transacao["ticker"]) if transacao["ticker"] in tickers else 0
+        tipo_index = TIPOS_TRANSACAO.index(transacao["tipo"]) if transacao["tipo"] in TIPOS_TRANSACAO else 0
+
+        with st.form(f"form_editar_transacao_{tx_edit_id}"):
+            col1, col2 = st.columns(2)
+            with col1:
+                ticker_edit = st.selectbox("Ticker", options=tickers, index=ticker_index)
+                tipo_edit = st.radio("Tipo", options=TIPOS_TRANSACAO, index=tipo_index, horizontal=True)
+            with col2:
+                data_edit = st.date_input(
+                    "Data",
+                    value=date.fromisoformat(transacao["data"]),
+                    format="DD/MM/YYYY",
+                )
+                quantidade_edit = st.number_input(
+                    "Quantidade",
+                    min_value=1,
+                    step=1,
+                    value=int(transacao["quantidade"]),
+                )
+
+            preco_edit = st.number_input(
+                "Preço Unitário (R$)",
+                min_value=0.01,
+                step=0.01,
+                format="%.2f",
+                value=float(transacao["preco_unitario"]),
+            )
+
+            salvar_edicao = st.form_submit_button(
+                "💾 Atualizar Transação",
+                width="stretch",
+                type="primary",
+            )
+
+        if salvar_edicao:
+            try:
+                ok = db.atualizar_transacao(
+                    transacao_id=tx_edit_id,
+                    ticker=ticker_edit,
+                    data=data_edit.isoformat(),
+                    tipo=tipo_edit,
+                    quantidade=int(quantidade_edit),
+                    preco_unitario=float(preco_edit),
+                )
+                if ok:
+                    st.success("Transação atualizada com sucesso.")
+                    st.rerun()
+                else:
+                    st.error("Não foi possível atualizar: o ativo informado não existe.")
+            except ValueError as exc:
+                st.error(f"Não foi possível atualizar a transação: {str(exc)}")
+
+    st.markdown("---")
+    st.caption("Exclusão de transação é permanente e altera os cálculos da carteira.")
+
     tx_id = st.selectbox("Selecionar ID para excluir", options=ids)
     confirmar = st.checkbox("Confirmo exclusão da transação selecionada")
 
