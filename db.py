@@ -689,6 +689,7 @@ def sincronizar_proventos_automaticos() -> int:
         inserted = 0
         for row in rows:
             ticker = _ticker_base(row["ticker"])
+            ticker_fk = _resolve_ticker_fk(conn, row["ticker"])
             data_pagamento = row["date"]
             dividendo_por_cota = float(row["dividend"] or 0)
 
@@ -717,7 +718,7 @@ def sincronizar_proventos_automaticos() -> int:
                 INSERT INTO proventos (ticker, data_pagamento, valor_total)
                 VALUES (?, ?, ?)
                 """,
-                (ticker, data_pagamento, valor_total),
+                (ticker_fk, data_pagamento, valor_total),
             )
             inserted += 1
 

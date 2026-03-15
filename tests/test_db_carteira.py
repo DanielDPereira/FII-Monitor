@@ -114,6 +114,27 @@ class DBCarteiraTestCase(unittest.TestCase):
         self.assertEqual(pos["proventos_acumulados"], 1.6)
         self.assertEqual(resumo["proventos_acumulados_total"], 1.6)
 
+    def test_sincroniza_proventos_com_ticker_cadastrado_em_formato_sa(self):
+        db.inserir_ativo("HGLG11.SA", "Cshg Logistica", "Logística")
+        db.inserir_transacao("HGLG11.SA", "2026-01-10", "COMPRA", 10, 100.0)
+        self._inserir_dividendo("HGLG11.SA", "2026-02-01", 1.0)
+
+        inserted = db.sincronizar_proventos_automaticos()
+
+        self.assertEqual(inserted, 1)
+        with db.get_connection() as conn:
+            row = conn.execute(
+                """
+                SELECT ticker, valor_total
+                FROM proventos
+                WHERE ticker = 'HGLG11.SA'
+                """
+            ).fetchone()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["ticker"], "HGLG11.SA")
+        self.assertEqual(row["valor_total"], 10.0)
+
 
 if __name__ == "__main__":
     unittest.main()
