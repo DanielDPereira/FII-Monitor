@@ -12,6 +12,33 @@ def _normalize_user_ticker(ticker: str) -> str:
     return (ticker or "").strip().upper()
 
 
+def _ticker_base(ticker: str) -> str:
+    """Remove sufixo .SA para compatibilizar ticker de mercado e carteira."""
+    t = _normalize_user_ticker(ticker)
+    return t[:-3] if t.endswith(".SA") else t
+
+
+def _resolve_ticker_fk(conn, ticker: str) -> str:
+    """Resolve ticker existente em ativos ignorando sufixo .SA para manter FK válida."""
+    ticker_base = _ticker_base(ticker)
+    row = conn.execute(
+        """
+        SELECT ticker
+        FROM ativos
+        WHERE UPPER(REPLACE(ticker, '.SA', '')) = ?
+        ORDER BY CASE WHEN UPPER(ticker) = ? THEN 0 ELSE 1 END
+        LIMIT 1
+        """,
+        (ticker_base, ticker_base),
+    ).fetchone()
+
+    if row:
+        return row["ticker"]
+
+    _upsert_ativo_minimo(conn, ticker_base)
+    return ticker_base
+
+
 def get_connection():
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -51,6 +78,71 @@ def inserir_ativo(ticker: str, nome: str, setor: str) -> bool:
         return True
     except sqlite3.IntegrityError:
         return False
+
+
+def consultar_ativo_yfinance(ticker: str) -> dict:
+    """
+    Valida ticker no yfinance e retorna nome amigavel do ativo.
+
+    Retorno:
+    - ok: bool
+    - ticker: str (normalizado em formato base, sem .SA)
+    - nome: str | None
+    - erro: str | None
+    """
+    import yfinance as yf
+
+    ticker_base = _ticker_base(ticker)
+    if not ticker_base:
+        return {
+            "ok": False,
+            "ticker": None,
+            "nome": None,
+            "erro": "Ticker inválido.",
+        }
+
+    symbol = f"{ticker_base}.SA"
+
+    try:
+        yf_obj = yf.Ticker(symbol)
+
+        info = {}
+        try:
+            info = yf_obj.info or {}
+        except Exception:
+            info = {}
+
+        hist = None
+        try:
+            hist = yf_obj.history(period="5d", interval="1d", auto_adjust=False, actions=False)
+        except Exception:
+            hist = None
+
+        has_history = hist is not None and not hist.empty
+        has_symbol_info = bool(info.get("symbol") or info.get("shortName") or info.get("longName"))
+
+        if not has_history and not has_symbol_info:
+            return {
+                "ok": False,
+                "ticker": ticker_base,
+                "nome": None,
+                "erro": "Ativo não encontrado no yfinance para este ticker.",
+            }
+
+        nome = info.get("shortName") or info.get("longName") or ticker_base
+        return {
+            "ok": True,
+            "ticker": ticker_base,
+            "nome": str(nome).strip() if nome else ticker_base,
+            "erro": None,
+        }
+    except Exception:
+        return {
+            "ok": False,
+            "ticker": ticker_base,
+            "nome": None,
+            "erro": "Não foi possível validar o ticker agora. Tente novamente em instantes.",
+        }
 
 
 def atualizar_ativo(ticker: str, nome: str, setor: str):
@@ -259,6 +351,121 @@ def importar_dados_mercado_csv(data_dir: str) -> dict:
     return counters
 
 
+def atualizar_dados_mercado_yfinance(tickers: list[str]) -> dict:
+    """
+    Atualiza dividendos e metricas recentes diretamente do yfinance
+    para os tickers informados (formato base, ex.: MXRF11).
+    """
+    if not tickers:
+        return {"fii_dividends": 0, "fii_metrics": 0, "tickers_processados": 0}
+
+    import yfinance as yf
+
+    counters = {"fii_dividends": 0, "fii_metrics": 0, "tickers_processados": 0}
+
+    with get_connection() as conn:
+        for ticker in tickers:
+            ticker_base = _ticker_base(ticker)
+            ticker_fk = _resolve_ticker_fk(conn, ticker_base)
+            ticker_yf = f"{ticker_base}.SA"
+            yf_obj = yf.Ticker(ticker_yf)
+
+            # Dividendos por evento
+            try:
+                dividends = yf_obj.dividends
+            except Exception:
+                dividends = None
+
+            if dividends is not None and not dividends.empty:
+                for date_idx, dividend_value in dividends.items():
+                    date_str = str(date_idx)[:10]
+                    dividend = float(dividend_value or 0)
+                    if dividend <= 0:
+                        continue
+
+                    conn.execute(
+                        """
+                        INSERT INTO fii_dividends (ticker, date, dividend)
+                        VALUES (?, ?, ?)
+                        ON CONFLICT(ticker, date) DO UPDATE SET
+                            dividend = excluded.dividend
+                        """,
+                        (ticker_fk, date_str, dividend),
+                    )
+                    counters["fii_dividends"] += 1
+
+            # Preco atual e metricas basicas
+            price = None
+            try:
+                hist = yf_obj.history(period="5d", interval="1d", auto_adjust=False, actions=False)
+                if hist is not None and not hist.empty:
+                    close_series = hist["Close"].dropna()
+                    if not close_series.empty:
+                        price = float(close_series.iloc[-1])
+            except Exception:
+                pass
+
+            book_value = None
+            market_cap = None
+            avg_volume = None
+            dividend_yield_api = None
+            try:
+                info = yf_obj.info or {}
+                book_value = info.get("bookValue")
+                market_cap = info.get("marketCap")
+                avg_volume = info.get("averageVolume")
+                dividend_yield_api = info.get("dividendYield")
+                if price is None:
+                    price = info.get("regularMarketPrice")
+            except Exception:
+                pass
+
+            p_vp = None
+            if price and book_value:
+                try:
+                    p_vp = float(price) / float(book_value)
+                except Exception:
+                    p_vp = None
+
+            conn.execute(
+                """
+                INSERT INTO fii_metrics
+                (ticker, collected_at, price, book_value, p_vp, dividend_yield_api,
+                 dividend_12m, dy_12m, market_cap, avg_volume)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    ticker_fk,
+                    datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    float(price) if price is not None else None,
+                    float(book_value) if book_value is not None else None,
+                    float(p_vp) if p_vp is not None else None,
+                    float(dividend_yield_api) if dividend_yield_api is not None else None,
+                    None,
+                    None,
+                    int(market_cap) if market_cap is not None else None,
+                    int(avg_volume) if avg_volume is not None else None,
+                ),
+            )
+            counters["fii_metrics"] += 1
+            counters["tickers_processados"] += 1
+
+        conn.commit()
+
+    return counters
+
+
+def obter_ultima_atualizacao_mercado() -> str | None:
+    """Retorna timestamp da ultima coleta em fii_metrics."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT MAX(collected_at) AS ultima_atualizacao FROM fii_metrics"
+        ).fetchone()
+    if not row:
+        return None
+    return row["ultima_atualizacao"]
+
+
 def listar_ativos_com_metricas_recentes():
     """Lista ativos junto com último snapshot de métricas, quando existir."""
     with get_connection() as conn:
@@ -301,3 +508,363 @@ def obter_historico_preco(ticker: str, limite: int = 30):
             (ticker_db, int(limite)),
         ).fetchall()
     return [dict(r) for r in rows]
+
+
+# ── TRANSAÇÕES E CARTEIRA ──────────────────────────────────────────────────
+
+def inserir_transacao(
+    ticker: str,
+    data: str,
+    tipo: str,
+    quantidade: int,
+    preco_unitario: float,
+) -> bool:
+    """Insere transacao para um ativo existente. Retorna False se ativo nao existir."""
+    ticker_db = _normalize_user_ticker(ticker)
+    tipo_db = (tipo or "").strip().upper()
+
+    return _salvar_transacao(
+        transacao_id=None,
+        ticker=ticker_db,
+        data=data,
+        tipo=tipo_db,
+        quantidade=quantidade,
+        preco_unitario=preco_unitario,
+    )
+
+
+def _salvar_transacao(
+    transacao_id: int | None,
+    ticker: str,
+    data: str,
+    tipo: str,
+    quantidade: int,
+    preco_unitario: float,
+) -> bool:
+    ticker_db = _normalize_user_ticker(ticker)
+    tipo_db = (tipo or "").strip().upper()
+
+    if tipo_db not in ("COMPRA", "VENDA"):
+        raise ValueError("tipo deve ser COMPRA ou VENDA")
+
+    if quantidade <= 0:
+        raise ValueError("quantidade deve ser maior que zero")
+
+    if preco_unitario <= 0:
+        raise ValueError("preco_unitario deve ser maior que zero")
+
+    with get_connection() as conn:
+        ativo = conn.execute(
+            "SELECT 1 FROM ativos WHERE ticker = ?",
+            (ticker_db,),
+        ).fetchone()
+        if not ativo:
+            return False
+
+        if tipo_db == "VENDA":
+            saldo_row = conn.execute(
+                """
+                SELECT
+                    COALESCE(SUM(CASE WHEN tipo = 'COMPRA' THEN quantidade ELSE 0 END), 0)
+                    - COALESCE(SUM(CASE WHEN tipo = 'VENDA' THEN quantidade ELSE 0 END), 0)
+                    AS saldo
+                FROM transacoes
+                WHERE ticker = ?
+                  AND (? IS NULL OR id <> ?)
+                """,
+                (ticker_db, transacao_id, transacao_id),
+            ).fetchone()
+            saldo_atual = int(saldo_row["saldo"] if saldo_row else 0)
+            if int(quantidade) > saldo_atual:
+                raise ValueError(
+                    f"venda inválida para {ticker_db}: saldo atual é {saldo_atual} cota(s)"
+                )
+
+        if transacao_id is None:
+            conn.execute(
+                """
+                INSERT INTO transacoes (ticker, data, tipo, quantidade, preco_unitario)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (ticker_db, data, tipo_db, int(quantidade), float(preco_unitario)),
+            )
+        else:
+            conn.execute(
+                """
+                UPDATE transacoes
+                SET ticker = ?, data = ?, tipo = ?, quantidade = ?, preco_unitario = ?
+                WHERE id = ?
+                """,
+                (
+                    ticker_db,
+                    data,
+                    tipo_db,
+                    int(quantidade),
+                    float(preco_unitario),
+                    int(transacao_id),
+                ),
+            )
+        conn.commit()
+    return True
+
+
+def buscar_transacao(transacao_id: int):
+    with get_connection() as conn:
+        row = conn.execute(
+            """
+            SELECT id, ticker, data, tipo, quantidade, preco_unitario
+            FROM transacoes
+            WHERE id = ?
+            """,
+            (int(transacao_id),),
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def atualizar_transacao(
+    transacao_id: int,
+    ticker: str,
+    data: str,
+    tipo: str,
+    quantidade: int,
+    preco_unitario: float,
+) -> bool:
+    return _salvar_transacao(
+        transacao_id=int(transacao_id),
+        ticker=ticker,
+        data=data,
+        tipo=tipo,
+        quantidade=quantidade,
+        preco_unitario=preco_unitario,
+    )
+
+
+def listar_transacoes(ticker: str = None, limite: int = 500):
+    """Lista transacoes mais recentes, opcionalmente filtrando por ticker."""
+    query = (
+        """
+        SELECT id, ticker, data, tipo, quantidade, preco_unitario,
+               ROUND(quantidade * preco_unitario, 2) AS valor_total
+        FROM transacoes
+        """
+    )
+    params = []
+
+    if ticker:
+        query += " WHERE ticker = ?"
+        params.append(_normalize_user_ticker(ticker))
+
+    query += " ORDER BY data DESC, id DESC LIMIT ?"
+    params.append(int(limite))
+
+    with get_connection() as conn:
+        rows = conn.execute(query, tuple(params)).fetchall()
+    return [dict(r) for r in rows]
+
+
+def deletar_transacao(transacao_id: int):
+    with get_connection() as conn:
+        conn.execute("DELETE FROM transacoes WHERE id = ?", (int(transacao_id),))
+        conn.commit()
+
+
+def sincronizar_proventos_automaticos() -> int:
+    """
+    Recalcula a tabela proventos usando eventos de dividendos (yfinance)
+    e a posicao historica em cada data de pagamento.
+
+    Retorna a quantidade de linhas gravadas em proventos.
+    """
+    with get_connection() as conn:
+        conn.execute("DELETE FROM proventos")
+
+        rows = conn.execute(
+            """
+            SELECT d.ticker, d.date, d.dividend
+            FROM fii_dividends d
+            ORDER BY d.ticker, d.date
+            """
+        ).fetchall()
+
+        inserted = 0
+        for row in rows:
+            ticker = _ticker_base(row["ticker"])
+            ticker_fk = _resolve_ticker_fk(conn, row["ticker"])
+            data_pagamento = row["date"]
+            dividendo_por_cota = float(row["dividend"] or 0)
+
+            if dividendo_por_cota <= 0:
+                continue
+
+            saldo_row = conn.execute(
+                """
+                SELECT COALESCE(
+                    SUM(CASE WHEN tipo = 'COMPRA' THEN quantidade ELSE -quantidade END),
+                    0
+                ) AS saldo
+                FROM transacoes
+                WHERE UPPER(REPLACE(ticker, '.SA', '')) = ? AND data <= ?
+                """,
+                (ticker, data_pagamento),
+            ).fetchone()
+
+            saldo = int(saldo_row["saldo"] if saldo_row else 0)
+            if saldo <= 0:
+                continue
+
+            valor_total = round(saldo * dividendo_por_cota, 2)
+            conn.execute(
+                """
+                INSERT INTO proventos (ticker, data_pagamento, valor_total)
+                VALUES (?, ?, ?)
+                """,
+                (ticker_fk, data_pagamento, valor_total),
+            )
+            inserted += 1
+
+        conn.commit()
+
+    return inserted
+
+
+def calcular_posicoes_carteira():
+    """
+    Consolida carteira por ticker a partir das transacoes e do ultimo preco coletado.
+    Retorna apenas ativos com quantidade em carteira maior que zero.
+    """
+    with get_connection() as conn:
+        transacoes = conn.execute(
+            """
+            SELECT ticker, data, tipo, quantidade, preco_unitario
+            FROM transacoes
+            ORDER BY ticker, data, id
+            """
+        ).fetchall()
+
+        ativos = conn.execute(
+            "SELECT ticker, nome, setor FROM ativos"
+        ).fetchall()
+
+        precos_rows = conn.execute(
+            """
+            SELECT m.ticker, m.price
+            FROM fii_metrics m
+            INNER JOIN (
+                SELECT ticker, MAX(collected_at) AS max_collected_at
+                FROM fii_metrics
+                GROUP BY ticker
+            ) latest
+                ON latest.ticker = m.ticker
+               AND latest.max_collected_at = m.collected_at
+            """
+        ).fetchall()
+
+        proventos_rows = conn.execute(
+            """
+            SELECT ticker, ROUND(COALESCE(SUM(valor_total), 0), 2) AS proventos_acumulados
+            FROM proventos
+            GROUP BY ticker
+            """
+        ).fetchall()
+
+    ativos_map = {row["ticker"]: dict(row) for row in ativos}
+    precos_map = { _ticker_base(row["ticker"]): row["price"] for row in precos_rows }
+    proventos_map = {
+        _ticker_base(row["ticker"]): float(row["proventos_acumulados"])
+        for row in proventos_rows
+    }
+
+    consolidado = {}
+    for tx in transacoes:
+        ticker = tx["ticker"]
+        qtd = int(tx["quantidade"])
+        preco = float(tx["preco_unitario"])
+        tipo = tx["tipo"]
+
+        if ticker not in consolidado:
+            consolidado[ticker] = {
+                "ticker": ticker,
+                "nome": ativos_map.get(ticker, {}).get("nome", ticker),
+                "setor": ativos_map.get(ticker, {}).get("setor", "Outro"),
+                "quantidade": 0,
+                "custo_posicao": 0.0,
+                "lucro_realizado": 0.0,
+            }
+
+        pos = consolidado[ticker]
+
+        if tipo == "COMPRA":
+            pos["quantidade"] += qtd
+            pos["custo_posicao"] += qtd * preco
+        elif tipo == "VENDA":
+            if pos["quantidade"] <= 0:
+                continue
+
+            qtd_venda = min(qtd, pos["quantidade"])
+            preco_medio_atual = pos["custo_posicao"] / pos["quantidade"]
+            pos["lucro_realizado"] += (preco - preco_medio_atual) * qtd_venda
+            pos["custo_posicao"] -= preco_medio_atual * qtd_venda
+            pos["quantidade"] -= qtd_venda
+
+            if pos["quantidade"] == 0:
+                pos["custo_posicao"] = 0.0
+
+    posicoes = []
+    for ticker, pos in consolidado.items():
+        if pos["quantidade"] <= 0:
+            continue
+
+        preco_medio = pos["custo_posicao"] / pos["quantidade"]
+        preco_atual = precos_map.get(ticker)
+        valor_atual = (
+            float(preco_atual) * pos["quantidade"]
+            if preco_atual is not None
+            else None
+        )
+        pl_nao_realizado = (
+            valor_atual - pos["custo_posicao"]
+            if valor_atual is not None
+            else None
+        )
+
+        posicoes.append(
+            {
+                "ticker": ticker,
+                "nome": pos["nome"],
+                "setor": pos["setor"],
+                "quantidade": pos["quantidade"],
+                "preco_medio": round(preco_medio, 4),
+                "custo_posicao": round(pos["custo_posicao"], 2),
+                "preco_atual": round(float(preco_atual), 4) if preco_atual is not None else None,
+                "valor_atual": round(valor_atual, 2) if valor_atual is not None else None,
+                "pl_nao_realizado": round(pl_nao_realizado, 2) if pl_nao_realizado is not None else None,
+                "lucro_realizado": round(pos["lucro_realizado"], 2),
+                "proventos_acumulados": round(proventos_map.get(ticker, 0.0), 2),
+            }
+        )
+
+    posicoes.sort(key=lambda x: x["custo_posicao"], reverse=True)
+    return posicoes
+
+
+def resumo_carteira():
+    posicoes = calcular_posicoes_carteira()
+    custo_total = round(sum(p["custo_posicao"] for p in posicoes), 2)
+
+    valor_atual_total = round(
+        sum(p["valor_atual"] for p in posicoes if p["valor_atual"] is not None),
+        2,
+    )
+    pl_total = round(valor_atual_total - custo_total, 2)
+    proventos_acumulados_total = round(
+        sum(p["proventos_acumulados"] for p in posicoes),
+        2,
+    )
+
+    return {
+        "ativos_em_carteira": len(posicoes),
+        "custo_total": custo_total,
+        "valor_atual_total": valor_atual_total,
+        "pl_total": pl_total,
+        "proventos_acumulados_total": proventos_acumulados_total,
+    }

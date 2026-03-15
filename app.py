@@ -12,6 +12,7 @@ st.set_page_config(
 
 # Importa as páginas
 from pages_content import cadastro_ativos
+from pages_content import carteira
 
 # Sidebar de navegação
 st.sidebar.title("🏢 FII Monitor")
@@ -19,9 +20,12 @@ st.sidebar.markdown("---")
 
 pagina = st.sidebar.radio(
     "Navegação",
-    ["📋 Cadastro de Ativos"],
+    ["📈 Carteira", "📋 Cadastro de Ativos"],
     label_visibility="collapsed",
 )
+
+if pagina == "📈 Carteira":
+    carteira.render()
 
 if pagina == "📋 Cadastro de Ativos":
     cadastro_ativos.render()
