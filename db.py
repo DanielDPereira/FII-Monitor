@@ -158,6 +158,10 @@ def atualizar_ativo(ticker: str, nome: str, setor: str):
 def deletar_ativo(ticker: str):
     ticker_db = _normalize_user_ticker(ticker)
     with get_connection() as conn:
+        # Deleta registros dependentes em cascata manualmente
+        # (pois transacoes e proventos usam ON DELETE RESTRICT)
+        conn.execute("DELETE FROM transacoes WHERE ticker = ?", (ticker_db,))
+        conn.execute("DELETE FROM proventos WHERE ticker = ?", (ticker_db,))
         conn.execute("DELETE FROM ativos WHERE ticker = ?", (ticker_db,))
         conn.commit()
 
