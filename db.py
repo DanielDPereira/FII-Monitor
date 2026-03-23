@@ -498,6 +498,164 @@ def listar_ativos_com_metricas_recentes():
     return [dict(r) for r in rows]
 
 
+def obter_detalhes_fii(ticker: str) -> dict:
+    """Busca detalhes de um FII do yfinance para exibição em modal."""
+    import yfinance as yf
+
+    ticker_base = _ticker_base(ticker)
+    symbol = f"{ticker_base}.SA"
+
+    try:
+        yf_obj = yf.Ticker(symbol)
+
+        info = {}
+        try:
+            info = yf_obj.info or {}
+        except Exception:
+            info = {}
+
+        # 1 ano para 52 semanas e 1 mês (via janela de 30 pregões)
+        hist = yf_obj.history(period="1y", interval="1d", auto_adjust=False, actions=True)
+        if hist is None or hist.empty:
+            return {
+                "ok": False,
+                "ticker": ticker_base,
+                "nome": None,
+                "erro": "Dados não disponíveis para este ativo.",
+                "dados": None,
+            }
+
+        close = hist["Close"].dropna()
+        if close.empty:
+            return {
+                "ok": False,
+                "ticker": ticker_base,
+                "nome": None,
+                "erro": "Sem dados de preço disponíveis.",
+                "dados": None,
+            }
+
+        preco_atual = float(close.iloc[-1])
+
+        variacao_1d = None
+        if len(close) >= 2:
+            preco_anterior = float(close.iloc[-2])
+            if preco_anterior != 0:
+                variacao_1d = ((preco_atual - preco_anterior) / preco_anterior) * 100
+
+        # Min/Max filtrando valores nulos e zeros
+        if "Low" in hist:
+            lows = hist["Low"].dropna()
+            lows = lows[lows > 0]  # Filtra zeros
+            min_52w = float(lows.min()) if not lows.empty else None
+        else:
+            min_52w = None
+            
+        if "High" in hist:
+            highs = hist["High"].dropna()
+            highs = highs[highs > 0]  # Filtra zeros
+            max_52w = float(highs.max()) if not highs.empty else None
+        else:
+            max_52w = None
+
+        hist_1m = hist.tail(30)
+        if not hist_1m.empty and "Low" in hist_1m:
+            lows_1m = hist_1m["Low"].dropna()
+            lows_1m = lows_1m[lows_1m > 0]  # Filtra zeros
+            min_mes = float(lows_1m.min()) if not lows_1m.empty else None
+        else:
+            min_mes = None
+            
+        if not hist_1m.empty and "High" in hist_1m:
+            highs_1m = hist_1m["High"].dropna()
+            highs_1m = highs_1m[highs_1m > 0]  # Filtra zeros
+            max_mes = float(highs_1m.max()) if not highs_1m.empty else None
+        else:
+            max_mes = None
+
+        variacao_52w = None
+        preco_inicio_12m = float(close.iloc[0])
+        if preco_inicio_12m != 0:
+            variacao_52w = ((preco_atual - preco_inicio_12m) / preco_inicio_12m) * 100
+
+        variacao_1m = None
+        close_1m = hist_1m["Close"].dropna() if "Close" in hist_1m else None
+        if close_1m is not None and len(close_1m) >= 2:
+            preco_inicio_1m = float(close_1m.iloc[0])
+            if preco_inicio_1m != 0:
+                variacao_1m = ((preco_atual - preco_inicio_1m) / preco_inicio_1m) * 100
+
+        # Dividendos acumulados no período de 1 ano carregado
+        dividend_12m = None
+        dy_12m = None
+        if "Dividends" in hist.columns:
+            total_dividendos = float(hist["Dividends"].fillna(0).sum())
+            dividend_12m = total_dividendos
+            if preco_atual != 0:
+                dy_12m = (total_dividendos / preco_atual) * 100
+
+        dividend_yield = info.get("dividendYield")
+        if dy_12m is None and dividend_yield is not None:
+            dy_12m = float(dividend_yield) * 100
+
+        nome = info.get("shortName") or info.get("longName") or ticker_base
+        book_value = info.get("bookValue")
+        market_cap = info.get("marketCap")
+        patrimonio = info.get("totalAssets") or info.get("netAssets")
+        total_cash = info.get("totalCash")
+        shares_outstanding = info.get("sharesOutstanding")
+        avg_volume = info.get("averageVolume")
+
+        p_vp = None
+        if book_value not in (None, 0):
+            p_vp = preco_atual / float(book_value)
+
+        ativo_db = buscar_ativo(ticker_base)
+        nome_final = ativo_db["nome"] if ativo_db else nome
+
+        dados = {
+            "ticker": ticker_base,
+            "nome": str(nome_final).strip() if nome_final else ticker_base,
+            "preco_atual": round(preco_atual, 2),
+            "variacao_1d": round(variacao_1d, 2) if variacao_1d is not None else None,
+            "variacao_1m": round(variacao_1m, 2) if variacao_1m is not None else None,
+            "variacao_52w": round(variacao_52w, 2) if variacao_52w is not None else None,
+            "min_mes": round(min_mes, 2) if min_mes is not None else None,
+            "max_mes": round(max_mes, 2) if max_mes is not None else None,
+            "min_52w": round(min_52w, 2) if min_52w is not None else None,
+            "max_52w": round(max_52w, 2) if max_52w is not None else None,
+            "dividend_12m": round(dividend_12m, 4) if dividend_12m is not None else None,
+            "dy_12m": round(dy_12m, 2) if dy_12m is not None else None,
+            "dividend_yield_api": round(float(dividend_yield) * 100, 2) if dividend_yield is not None else None,
+            "book_value": round(float(book_value), 2) if book_value is not None else None,
+            "p_vp": round(p_vp, 2) if p_vp is not None else None,
+            "market_cap": int(market_cap) if market_cap is not None else None,
+            "patrimonio": int(patrimonio) if patrimonio is not None else None,
+            "total_cash": int(total_cash) if total_cash is not None else None,
+            "cash_pct_mktcap": round((float(total_cash) / float(market_cap)) * 100, 2)
+            if total_cash is not None and market_cap not in (None, 0)
+            else None,
+            "shares_outstanding": int(shares_outstanding) if shares_outstanding is not None else None,
+            "avg_volume": int(avg_volume) if avg_volume is not None else None,
+        }
+
+        return {
+            "ok": True,
+            "ticker": ticker_base,
+            "nome": nome_final,
+            "erro": None,
+            "dados": dados,
+        }
+    except Exception as e:
+        return {
+            "ok": False,
+            "ticker": ticker_base,
+            "nome": None,
+            "erro": f"Erro ao buscar dados: {str(e)}",
+            "dados": None,
+        }
+
+
 def obter_historico_preco(ticker: str, limite: int = 30):
     ticker_db = _normalize_user_ticker(ticker)
     with get_connection() as conn:
