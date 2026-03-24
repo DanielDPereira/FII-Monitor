@@ -113,17 +113,22 @@ def _fmt_int(value) -> str:
     return f"{int(value):,}".replace(",", ".")
 
 def _metrica_customizada(label: str, valor: str, delta: str = None):
-    """Renderiza uma métrica sem truncamento usando HTML puro."""
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        st.markdown(f"**{label}**")
-    with col2:
-        st.markdown("")
-    
-    st.markdown(f"### {valor}")
-    
+    """Renderiza uma métrica sem truncamento usando HTML puro em formato de card."""
+    delta_html = ""
     if delta:
-        st.markdown(f"<span style='color: #90ee90; font-size: 0.9rem;'>{delta}</span>", unsafe_allow_html=True)
+        cor_delta = "#4ade80" if "↑" in delta or "+" in delta else ("#f87171" if "↓" in delta or "-" in delta else "#a0a0b0")
+        delta_html = f"<div style='color: {cor_delta}; font-size: 0.95rem; font-weight: 600; margin-top: 4px;'>{delta}</div>"
+    
+    st.markdown(
+        f"""
+        <div style="background: #1e1e2f; padding: 18px 20px; border-radius: 12px; margin-bottom: 16px; border: 1px solid #3d3d5c; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+            <div style="color: #b0b0c0; font-size: 0.95rem; font-weight: 500; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.5px;">{label}</div>
+            <div style="color: #ffffff; font-size: 1.6rem; font-weight: 700;">{valor}</div>
+            {delta_html}
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
 def _renderizar_modal_detalhes(ticker: str):
     """Renderiza um modal com detalhes do FII do yfinance - sem truncamento."""
@@ -135,115 +140,53 @@ def _renderizar_modal_detalhes(ticker: str):
     
     dados = detalhes["dados"]
     
-    # Título
-    st.markdown(f"# {dados['ticker']} — {dados['nome']}")
+    st.markdown(f"## {dados['ticker']} — {dados['nome']}")
     st.divider()
     
-    # ─── SEÇÃO 1: PREÇO E VARIAÇÕES ─────────────────────────────────────────
-    st.subheader("📊 Preço e Variações")
+    tab_resumo, tab_div, tab_fund = st.tabs(["📊 Resumo", "💰 Dividendos", "🏢 Fundamentos"])
     
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        delta_str = f"↑ {_fmt_pct(dados['variacao_1d'])}" if dados.get("variacao_1d", 0) >= 0 else f"↓ {_fmt_pct(dados['variacao_1d'])}"
-        _metrica_customizada(
-            "Valor Atual",
-            _fmt_brl(dados["preco_atual"]),
-            delta=delta_str if dados.get("variacao_1d") is not None else None
-        )
-    
-    with col2:
-        _metrica_customizada(
-            "DY 12 Meses",
-            _fmt_pct(dados["dy_12m"]),
-        )
+    # ─── ABA 1: RESUMO (PREÇOS E VARIAÇÕES) ─────────────────────────────────
+    with tab_resumo:
+        col1, col2 = st.columns(2)
+        with col1:
+            delta_str = None
+            if dados.get("variacao_1d") is not None:
+                delta_str = f"↑ {_fmt_pct(dados['variacao_1d'])}" if dados["variacao_1d"] >= 0 else f"↓ {_fmt_pct(dados['variacao_1d'])}"
+            _metrica_customizada("Valor Atual", _fmt_brl(dados["preco_atual"]), delta=delta_str)
+            _metrica_customizada("Variação Mês", _fmt_pct(dados["variacao_1m"]))
+            _metrica_customizada("Mínima (52 Semanas)", _fmt_brl(dados["min_52w"]))
+        
+        with col2:
+            _metrica_customizada("Variação 12m", _fmt_pct(dados["variacao_52w"]))
+            _metrica_customizada("Mínima (Mês Atual)", _fmt_brl(dados["min_mes"]))
+            _metrica_customizada("Máxima (52 Semanas)", _fmt_brl(dados["max_52w"]))
 
-    col1, col2 = st.columns(2)
+    # ─── ABA 2: DIVIDENDOS ──────────────────────────────────────────────────
+    with tab_div:
+        col1, col2 = st.columns(2)
+        with col1:
+            _metrica_customizada("Últimos 12 Meses", _fmt_brl(dados["dividend_12m"], casas=4))
+        with col2:
+            _metrica_customizada("DY 12 Meses", _fmt_pct(dados["dy_12m"]))
+            
+    # ─── ABA 3: FUNDAMENTOS ─────────────────────────────────────────────────
+    with tab_fund:
+        col1, col2 = st.columns(2)
+        with col1:
+            _metrica_customizada("Valor Patrimonial/Cota", _fmt_brl(dados["book_value"]))
+            p_vp_str = f"{dados['p_vp']:.2f}".replace(".", ",") if dados.get("p_vp") is not None else "N/A"
+            _metrica_customizada("P/VP", p_vp_str)
+            if dados.get("patrimonio"):
+                _metrica_customizada("Patrimônio Líquido", _fmt_brl(dados["patrimonio"], casas=0))
+                
+        with col2:
+            _metrica_customizada("Valor de Mercado", _fmt_brl(dados["market_cap"], casas=0))
+            if dados.get("avg_volume"):
+                _metrica_customizada("Liq. Média Diária", _fmt_int(dados["avg_volume"]))
+            ifdados_cotas = dados.get("shares_outstanding")
+            if ifdados_cotas:
+                _metrica_customizada("Nº de Cotas", _fmt_int(ifdados_cotas))
 
-    with col1:
-        _metrica_customizada(
-            "Variação Mês",
-            _fmt_pct(dados["variacao_1m"]),
-        )
-
-    with col2:
-        _metrica_customizada(
-            "Variação 12m",
-            _fmt_pct(dados["variacao_52w"]),
-        )
-    
-    # ─── SEÇÃO 2: MÍNIMA E MÁXIMA ────────────────────────────────────────────
-    st.subheader("📈 Mínima e Máxima")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("**52 Semanas**")
-        col_min, col_max = st.columns(2)
-        with col_min:
-            _metrica_customizada("Mínima", _fmt_brl(dados["min_52w"]))
-        with col_max:
-            _metrica_customizada("Máxima", _fmt_brl(dados["max_52w"]))
-    
-    with col2:
-        st.markdown("**Mês Atual**")
-        col_min, col_max = st.columns(2)
-        with col_min:
-            _metrica_customizada("Mínima", _fmt_brl(dados["min_mes"]))
-        with col_max:
-            _metrica_customizada("Máxima", _fmt_brl(dados["max_mes"]))
-    
-    # ─── SEÇÃO 3: DIVIDENDOS ────────────────────────────────────────────────
-    st.subheader("💰 Dividendos")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        _metrica_customizada(
-            "Últimos 12 Meses",
-            _fmt_brl(dados["dividend_12m"], casas=4),
-        )
-    
-    with col2:
-        _metrica_customizada(
-            "DY 12 Meses",
-            _fmt_pct(dados["dy_12m"]),
-        )
-    
-    # ─── SEÇÃO 4: MÉTRICAS PATRIMONIAIS ──────────────────────────────────────
-    st.subheader("🏢 Métricas Patrimoniais")
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        _metrica_customizada(
-            "Valor Patrimonial/Cota",
-            _fmt_brl(dados["book_value"]),
-        )
-    
-    with col2:
-        p_vp_str = f"{dados['p_vp']:.2f}".replace(".", ",") if dados["p_vp"] is not None else "N/A"
-        _metrica_customizada(
-            "P/VP",
-            p_vp_str,
-        )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        _metrica_customizada(
-            "Valor de Mercado",
-            _fmt_brl(dados["market_cap"], casas=0),
-        )
-    
-    with col2:
-        if dados.get("shares_outstanding"):
-            _metrica_customizada(
-                "Nº de Cotas",
-                _fmt_int(dados.get("shares_outstanding")),
-            )
-    
-    # ─── RODAPÉ ─────────────────────────────────────────────────────────────
     st.divider()
     st.caption("📊 Dados extraídos do yfinance. Atualizar para obter informações recentes.")
 

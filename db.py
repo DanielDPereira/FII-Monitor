@@ -606,6 +606,60 @@ def obter_detalhes_fii(ticker: str) -> dict:
         shares_outstanding = info.get("sharesOutstanding")
         avg_volume = info.get("averageVolume")
 
+        # ─── FALLBACK STATUSINVEST ────────────────────────────────────────────────
+        # Fiagros ou FIIs menos comuns não têm bookValue, sharesOutstanding no yfinance
+        if book_value in (None, 0) or shares_outstanding in (None, 0) or market_cap in (None, 0):
+            try:
+                from curl_cffi import requests as crequests
+                from bs4 import BeautifulSoup
+
+                html = ""
+                for categoria in ["fiagros", "fundos-imobiliarios"]:
+                    url = f"https://statusinvest.com.br/{categoria}/{ticker_base.lower()}"
+                    res = crequests.get(url, impersonate="chrome", timeout=5)
+                    if res.status_code == 200 and "P/VP" in res.text:
+                        html = res.text
+                        break
+                
+                if html:
+                    soup = BeautifulSoup(html, "html.parser")
+                    
+                    # Tenta extrair VP/Cota nos dois possíveis layouts
+                    vpa_div = soup.find("div", attrs={"title": "V.P. / Cota"})
+                    if not vpa_div:
+                        vpa_div = soup.find("div", attrs={"title": "V.P. / Cota (Patrimônio Líquido / Número de cotas atuais)"})
+                    if vpa_div:
+                        val_str = vpa_div.find("strong", class_="value").text.strip().replace('.', '').replace(',', '.')
+                        if val_str and val_str != "-":
+                            book_value = float(val_str) if book_value in (None, 0) else book_value
+                    
+                    if book_value in (None, 0):
+                        h3_vpa = soup.find(lambda t: t.name == 'h3' and ('Val. patrimonial p/cota' in t.text or 'V.P. / Cota' in t.text))
+                        if h3_vpa and h3_vpa.parent.find("strong"):
+                            val_str = h3_vpa.parent.find("strong").text.strip().replace('.', '').replace(',', '.')
+                            if val_str and val_str != "-":
+                                book_value = float(val_str)
+                        
+                    # Tenta extrair Num Cotas
+                    for div in soup.find_all("div", class_="info"):
+                        t = div.find("h3", class_="title")
+                        if t and "Nº de cotas" in t.text:
+                            strong = div.find("strong", class_="value")
+                            if strong:
+                                c = strong.text.strip().replace('.', '')
+                                if c.isdigit():
+                                    shares_outstanding = int(c) if shares_outstanding in (None, 0) else shares_outstanding
+            except Exception:
+                pass
+
+
+        # Fallbacks caso o yfinance não forneça os dados diretamente para FIIs
+        if market_cap in (None, 0) and shares_outstanding and preco_atual:
+            market_cap = preco_atual * float(shares_outstanding)
+            
+        if patrimonio in (None, 0) and shares_outstanding and book_value:
+            patrimonio = float(book_value) * float(shares_outstanding)
+
         p_vp = None
         if book_value not in (None, 0):
             p_vp = preco_atual / float(book_value)
