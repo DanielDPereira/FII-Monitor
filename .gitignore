@@ -77,3 +77,17 @@ cover/
 .mypy_cache/
 .dmypy.json
 dmypy.json
+
+# SQLite
+*.db
+*.sqlite
+*.sqlite3
+*.db-journal
+*.sqlite-journal
+*.sqlite3-journal
+*.db-wal
+*.sqlite-wal
+*.sqlite3-wal
+*.db-shm
+*.sqlite-shm
+*.sqlite3-shm

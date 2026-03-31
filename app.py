@@ -1,7 +1,10 @@
+import os
 import streamlit as st
-from database_setup import setup_database
+from database_setup import DB_PATH, setup_database
 
-setup_database(verbose=False)
+# Inicializa o schema apenas na primeira execução (quando o arquivo do banco não existe).
+if not os.path.exists(DB_PATH):
+    setup_database(verbose=False)
 
 st.set_page_config(
     page_title="FII Monitor",
